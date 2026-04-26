@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Wasserentnahme</title>
-<link rel="manifest" href="manifest.json">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<link rel="manifest" href="manifest.json">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -289,6 +289,12 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
       <label for="f-feld-link">Feld verknüpfen (optional)</label>
       <select id="f-feld-link" onchange="onFeldLink()"><option value="">– Kein Feld –</option></select>
     </div>
+
+    <div class="field">
+      <label for="f-kultur">Kultur / Frucht *</label>
+      <select id="f-kultur">
+        </select>
+    </div>
     
     <div class="field" id="flaeche-wrap" style="display:none">
       <label>Zu beregnende Fläche (ha) *</label>
@@ -486,21 +492,69 @@ let html5QrCode=null,scannerRunning=false,auswertungData=[],activeEndId=null;
 let leafletMap=null,mapMarkers=[],myLocMarker=null,currentGPS=null;
 let editFeldId=null,kulturFeldId=null;
 
+const KULTUR_ICONS={
+  'Winterweizen':'🌾','Sommerweizen':'🌾','Wintergerste':'🌾','Sommergerste':'🌾',
+  'Roggen':'🌾','Triticale':'🌾','Hafer':'🌾','Dinkel':'🌾',
+  'Zuckerrüben':'🪴','Kartoffeln':'🥔','Rüben':'🪴',
+  'Körnermais':'🌽','Silomais':'🌽','Soja':'🫘','Sonnenblumen':'🌻',
+  'Raps':'💛','Erbsen':'🫛','Kürbis':'🎃','Zwiebel':'🧅','Karotten':'🥕',
+  'Grünland':'🍀','Brachfläche':'⬜','Sonstiges':'🌱'
+};
+
 // ─── INIT ────────────────────────────────────────
 function init(){
   loadSettingsUI();
   updateSyncStatusUI();
   fillJahre();
+  renderKulturDropdown(); // NEU: Kulturen ins Start-Formular laden
   renderAktiv();
   updateFeldSelector();
   
   setInterval(updateTimers,1000);
   setInterval(refreshMapMarkers,5000);
   
-  // Offline-Warteschlange Logik beim Start & Verbindungswechsel
   window.addEventListener('online', processQueue);
   window.addEventListener('offline', updateSyncStatusUI);
-  setInterval(processQueue, 15000); // Versucht alle 15 Sek zu senden falls was hängt
+  setInterval(processQueue, 15000);
+  
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW Info:', err));
+    });
+  }
+}
+
+// ─── KULTUR DROPDOWN LOGIK (TOP 3) ───────────────
+function renderKulturDropdown() {
+  const sel = document.getElementById('f-kultur');
+  const recent = JSON.parse(localStorage.getItem('wz_recent_kultur') || '[]');
+  
+  let html = '<option value="">– Wählen –</option>';
+  
+  // Die bis zu 3 zuletzt genutzten
+  if (recent.length > 0) {
+    html += '<optgroup label="Zuletzt genutzt">';
+    recent.forEach(r => { html += `<option value="${r}">${r}</option>`; });
+    html += '</optgroup>';
+  }
+  
+  // Alle anderen
+  html += '<optgroup label="Alle Kulturen">';
+  Object.keys(KULTUR_ICONS).forEach(k => {
+    if (!recent.includes(k)) html += `<option value="${k}">${k}</option>`;
+  });
+  html += '</optgroup>';
+  
+  sel.innerHTML = html;
+}
+
+function speichereRecentKultur(kultur) {
+  if (!kultur) return;
+  let recent = JSON.parse(localStorage.getItem('wz_recent_kultur') || '[]');
+  // Aktuelle Kultur nach ganz oben setzen, Duplikate entfernen, max 3 behalten
+  recent = [kultur, ...recent.filter(k => k !== kultur)].slice(0, 3);
+  localStorage.setItem('wz_recent_kultur', JSON.stringify(recent));
+  renderKulturDropdown();
 }
 
 // ─── SETTINGS ───────────────────────────────────
@@ -517,7 +571,7 @@ function saveSettings(){
   localStorage.setItem('wz_url',u);
   updateSyncStatusUI();
   showToast('✓ Gespeichert');
-  processQueue(); // Direkt versuchen evtl. Wartendes zu senden
+  processQueue();
 }
 function savePreis(){const p=document.getElementById('s-preis').value;if(p)localStorage.setItem('wz_preis',p);showToast('✓ Preis gespeichert');}
 
@@ -728,16 +782,21 @@ function beregnungStarten(){
   const start=document.getElementById('f-start').value.trim();
   const qr=document.getElementById('qr-text').textContent;
   const feldId=document.getElementById('f-feld-link').value||null;
+  const kultur=document.getElementById('f-kultur').value||''; // NEU
   const flaeche=parseFloat(document.getElementById('f-flaeche').value)||null;
   
-  if(!name||!standort||!start){showToast('⚠ Pflichtfelder ausfüllen');return;}
+  if(!name||!standort||!start||!kultur){showToast('⚠ Bitte alle Pflichtfelder (inkl. Kultur) ausfüllen');return;}
   const s=parseFloat(start);if(isNaN(s)||s<0){showToast('⚠ Ungültiger Zählerstand');return;}
   
-  const entry={id:Date.now(),name,standort,startstand:s,datum:new Date().toISOString(),qr,feldId,flaeche,lat:currentGPS?.lat||null,lng:currentGPS?.lng||null,acc:currentGPS?.acc||null};
+  // Gewählte Kultur in die Top 3 der "Recent" speichern
+  speichereRecentKultur(kultur);
+
+  const entry={id:Date.now(),name,standort,startstand:s,kultur:kultur,datum:new Date().toISOString(),qr,feldId,flaeche,lat:currentGPS?.lat||null,lng:currentGPS?.lng||null,acc:currentGPS?.acc||null};
   const aktiv=getAktiv();aktiv.push(entry);saveAktiv(aktiv);
   
   document.getElementById('f-start').value='';document.getElementById('f-name').value='';
   document.getElementById('f-feld-link').value='';
+  document.getElementById('f-kultur').value='';
   document.getElementById('flaeche-wrap').style.display='none';
   resetQR();currentGPS=null;
   document.getElementById('gps-chip').className='gps-chip idle';document.getElementById('gps-icon').textContent='📍';document.getElementById('gps-text').textContent='Standort noch nicht abgerufen';
@@ -763,7 +822,7 @@ function renderAktiv(){
           <div class="aktiv-pulse"></div>
           <div style="flex:1">
             <div class="aktiv-name">${v.name}</div>
-            <div class="aktiv-sub">📍 ${v.standort}${feldName?` · 🌾 ${feldName}`:''}</div>
+            <div class="aktiv-sub">📍 ${v.standort}${feldName?` · 🌾 ${feldName}`:''}${v.kultur?` · 🌱 ${v.kultur}`:''}</div>
             ${gpsTag}
           </div>
           <div style="font-size:11px;background:var(--orange-bg);color:var(--orange);padding:3px 9px;border-radius:var(--r50);font-weight:700;border:1px solid rgba(230,126,34,.3)">AKTIV</div>
@@ -839,7 +898,8 @@ async function beregnungBeenden(){
     if (!check) return; 
   }
   
-  const entry={id:Date.now(),name:v.name,standort:v.standort,startstand:v.startstand,endstand:endVal,wasser:verbrauch,flaeche:v.flaeche,mm:mm,datum:v.datum,endDatum:new Date().toISOString(),qr:v.qr,laufzeit:getElapsed(v.datum),lat:v.lat||null,lng:v.lng||null,feldId:v.feldId||null};
+  // Kultur mit ins Protokoll-Objekt übernehmen
+  const entry={id:Date.now(),name:v.name,standort:v.standort,kultur:v.kultur,startstand:v.startstand,endstand:endVal,wasser:verbrauch,flaeche:v.flaeche,mm:mm,datum:v.datum,endDatum:new Date().toISOString(),qr:v.qr,laufzeit:getElapsed(v.datum),lat:v.lat||null,lng:v.lng||null,feldId:v.feldId||null};
   
   // Ins lokale Protokoll
   const local=getLocal();local.unshift(entry);localStorage.setItem('wz_eintraege',JSON.stringify(local));
@@ -866,14 +926,6 @@ function saveFelder(a){localStorage.setItem('wz_felder',JSON.stringify(a));}
 function getKulturen(){try{return JSON.parse(localStorage.getItem('wz_kulturen')||'[]');}catch{return[];}}
 function saveKulturen(a){localStorage.setItem('wz_kulturen',JSON.stringify(a));}
 
-const KULTUR_ICONS={
-  'Winterweizen':'🌾','Sommerweizen':'🌾','Wintergerste':'🌾','Sommergerste':'🌾',
-  'Roggen':'🌾','Triticale':'🌾','Hafer':'🌾','Dinkel':'🌾',
-  'Zuckerrüben':'🪴','Kartoffeln':'🥔','Rüben':'🪴',
-  'Körnermais':'🌽','Silomais':'🌽','Soja':'🫘','Sonnenblumen':'🌻',
-  'Raps':'💛','Erbsen':'🫛','Kürbis':'🎃','Zwiebel':'🧅','Karotten':'🥕',
-  'Grünland':'🍀','Brachfläche':'⬜','Sonstiges':'🌱'
-};
 const BODENART_COLORS={
   'Sand':'#F5E6C8','Lehmiger Sand':'#E8D5A8','Sandiger Lehm':'#D4B896','Lehm':'#C4956A',
   'Toniger Lehm':'#A87850','Ton':'#8B5E3C','Schluff':'#D4C8A0','Humus':'#6B4423','Sonstiges':'#9E9E9E'
@@ -1038,7 +1090,7 @@ function renderProtokoll(){
       <div class="ava">${ini}</div>
       <div class="entry-info">
         <div class="entry-name">${e.name}</div>
-        <div class="entry-sub">📍 ${e.standort}${feldName?` · 🌾 ${feldName}`:''}</div>
+        <div class="entry-sub">📍 ${e.standort}${feldName?` · 🌾 ${feldName}`:''}${e.kultur?` · 🌱 ${e.kultur}`:''}</div>
         <div class="entry-sub">🕐 ${dt}${e.laufzeit?' · ⏱ '+e.laufzeit:''}${e.mm?' · 🌧️ '+e.mm.toFixed(1)+' mm':''}${e.lat?' · 📍':''}</div>
       </div>
       <div class="entry-val">${parseFloat(e.wasser).toFixed(3)}<small>m³</small></div>
@@ -1088,8 +1140,8 @@ function updateKosten(){
 }
 function exportCSV(){if(!auswertungData.length){showToast('Keine Daten');return;}downloadCSV(auswertungData,document.getElementById('sel-jahr').value);}
 function downloadCSV(rows,suffix){
-  const h='Name,Standort,Verbrauch (m³),Startdatum,Laufzeit\n';
-  const b=rows.map(e=>`"${e.name||''}","${e.standort||''}",${parseFloat(e.wasser||0).toFixed(3)},"${e.datum||''}","${e.laufzeit||''}"`).join('\n');
+  const h='Name,Standort,Kultur,Verbrauch (m³),Niederschlag (mm),Startdatum,Laufzeit\n';
+  const b=rows.map(e=>`"${e.name||''}","${e.standort||''}","${e.kultur||''}",${parseFloat(e.wasser||0).toFixed(3)},${e.mm?parseFloat(e.mm).toFixed(1):''},"${e.datum||''}","${e.laufzeit||''}"`).join('\n');
   const blob=new Blob(['\uFEFF'+h+b],{type:'text/csv;charset=utf-8;'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`wasserentnahme_${suffix||new Date().getFullYear()}.csv`;a.click();
 }
@@ -1105,12 +1157,6 @@ function gotoPage(id,btn){
   if(id==='beregnung'&&leafletMap)setTimeout(()=>leafletMap.invalidateSize(),200);
 }
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800);}
-// Service Worker registrieren (für die App-Installation)
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./sw.js').catch(err => console.log('SW Info:', err));
-  });
-}
 init();
 </script>
 </body>
