@@ -133,6 +133,24 @@ textarea{resize:vertical;min-height:72px;font-size:14px}
 .remote-btn:active{transform:scale(.95)}
 .remote-badge{margin-left:auto;background:rgba(155,89,182,.12);color:#9B59B6;font-size:11px;font-weight:700;padding:2px 9px;border-radius:var(--r50)}
 
+/* Letzter Endstand – Vorschlag */
+.last-end-chip{display:flex;align-items:center;gap:11px;margin-top:8px;padding:9px 12px;border-radius:var(--r10);background:var(--b50);border:1.5px solid var(--b100)}
+.last-end-chip .le-icon{font-size:18px;flex-shrink:0}
+.last-end-chip .le-info{flex:1;min-width:0}
+.last-end-chip .le-title{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.last-end-chip .le-val{font-family:'DM Mono',monospace;font-size:15px;font-weight:500;color:var(--b700);line-height:1.2;margin-top:1px}
+.last-end-chip .le-meta{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.last-end-chip .le-apply{background:var(--b600);color:#fff;border:none;border-radius:var(--r8);padding:7px 12px;font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;flex-shrink:0}
+.last-end-chip .le-apply:active{transform:scale(.95)}
+
+/* Abweichungs-Notiz */
+.abweich-wrap{margin-top:10px;padding:11px 13px;border-radius:var(--r10);background:var(--orange-bg);border:1.5px solid rgba(230,126,34,.4)}
+.abweich-header{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;color:var(--orange);margin-bottom:8px;gap:8px}
+.abweich-diff-val{font-family:'DM Mono',monospace;font-size:12px;background:rgba(255,255,255,.5);padding:2px 8px;border-radius:var(--r50)}
+@media(prefers-color-scheme:dark){.abweich-diff-val{background:rgba(0,0,0,.25)}}
+.abweich-wrap label{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
+.abweich-wrap textarea{font-size:13px;min-height:54px;background:var(--card)}
+
 /* MODAL */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;padding:1rem;overflow-y:auto;align-items:flex-start;justify-content:center}
 .modal-overlay.show{display:flex}
@@ -326,10 +344,19 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
       </div>
     </div>
 
-    <div class="field"><label for="f-standort">Standort / Zapfstelle *</label><input type="text" id="f-standort" placeholder="z.B. Feld Süd – Zapfstelle A"></div>
+    <div class="field"><label for="f-standort">Standort / Zapfstelle *</label><input type="text" id="f-standort" placeholder="z.B. Feld Süd – Zapfstelle A" onblur="lookupLastEndstand(this.value)"></div>
     <div class="field">
       <label for="f-start">Anfangszählerstand (m³) *</label>
-      <div class="m3-wrap"><input type="number" id="f-start" placeholder="0000" step="0.001" min="0" inputmode="decimal"><span class="m3-unit">m³</span></div>
+      <div class="m3-wrap"><input type="number" id="f-start" placeholder="0000" step="0.001" min="0" inputmode="decimal" oninput="checkAbweichung()"><span class="m3-unit">m³</span></div>
+      <div id="last-end-chip" class="last-end-chip" style="display:none"></div>
+      <div id="abweich-wrap" class="abweich-wrap" style="display:none">
+        <div class="abweich-header">
+          <span>⚠ Abweichung vom Vorschlag</span>
+          <span class="abweich-diff-val">Δ <span id="abweich-diff">0.000</span> m³</span>
+        </div>
+        <label for="f-startnote">Grund / Notiz *</label>
+        <textarea id="f-startnote" placeholder="z.B. Zähler getauscht, Ablesefehler korrigiert, anderer Zählerstand notiert, …"></textarea>
+      </div>
     </div>
     <button class="btn btn-green" onclick="beregnungStarten()">▶&nbsp; Beregnung starten</button>
   </div>
@@ -607,6 +634,112 @@ async function testConnection(){
   catch{st.className='url-status err';st.textContent='✗ Fehlgeschlagen.';}
 }
 
+// ─── LETZTER ENDSTAND – VORSCHLAG ────────────────
+let lastEndSuggestion = null; // {endstand, datum, endDatum, name, standort}
+
+function getLastEndCache(){try{return JSON.parse(localStorage.getItem('wz_last_endstand')||'{}');}catch{return{};}}
+function saveLastEndCache(c){localStorage.setItem('wz_last_endstand', JSON.stringify(c));}
+
+function updateLastEndCache(standort, endstand, endDatum, name){
+  if(!standort) return;
+  const c = getLastEndCache();
+  // Nur überschreiben, wenn neuer als bestehender Eintrag
+  const ex = c[standort];
+  if(!ex || !ex.endDatum || new Date(endDatum) >= new Date(ex.endDatum)){
+    c[standort] = {endstand:parseFloat(endstand), endDatum, name:name||''};
+    saveLastEndCache(c);
+  }
+}
+
+async function lookupLastEndstand(standort){
+  standort = (standort||'').trim();
+  if(!standort){ clearLastEndSuggestion(); return; }
+  
+  // 1. Lokaler Cache → sofort anzeigen, falls vorhanden
+  const cache = getLastEndCache();
+  if(cache[standort]){
+    showLastEndSuggestion(cache[standort], standort);
+  }
+  
+  // 2. Server-Lookup → ggf. aktuellere Daten von anderen Teilnehmern
+  const url = getUrl();
+  if(!url || !navigator.onLine) return;
+  try{
+    const r = await fetch(url+'?lastEnd=1&standort='+encodeURIComponent(standort)+'&t='+Date.now(),
+                         {signal:AbortSignal.timeout(6000)});
+    if(!r.ok && r.status !== 0) return;
+    const data = await r.json();
+    if(data && data.endstand != null){
+      // Cache aktualisieren
+      const c = getLastEndCache();
+      c[standort] = {
+        endstand: parseFloat(data.endstand),
+        endDatum: data.endDatum || data.datum || null,
+        name: data.name || ''
+      };
+      saveLastEndCache(c);
+      showLastEndSuggestion(c[standort], standort);
+    } else if(!cache[standort]) {
+      // weder lokal noch Server: nichts anzeigen
+      clearLastEndSuggestion();
+    }
+  }catch{ /* offline o.ä. → lokaler Cache reicht */ }
+}
+
+function showLastEndSuggestion(data, standort){
+  lastEndSuggestion = {...data, standort};
+  const chip = document.getElementById('last-end-chip');
+  const val = parseFloat(data.endstand).toFixed(3);
+  const dt = data.endDatum;
+  const dtStr = dt ? new Date(dt).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+  const meta = [dtStr, data.name].filter(Boolean).join(' · ');
+  chip.innerHTML = `
+    <div class="le-icon">💡</div>
+    <div class="le-info">
+      <div class="le-title">Letzter Endstand an dieser Zapfstelle</div>
+      <div class="le-val">${val} m³</div>
+      ${meta?`<div class="le-meta">${meta}</div>`:''}
+    </div>
+    <button class="le-apply" type="button" onclick="applyLastEnd()">Übernehmen</button>
+  `;
+  chip.style.display = 'flex';
+  checkAbweichung();
+}
+
+function clearLastEndSuggestion(){
+  lastEndSuggestion = null;
+  const chip = document.getElementById('last-end-chip');
+  if(chip) chip.style.display = 'none';
+  const w = document.getElementById('abweich-wrap');
+  if(w){ w.style.display = 'none'; const ta = document.getElementById('f-startnote'); if(ta) ta.value=''; }
+}
+
+function applyLastEnd(){
+  if(!lastEndSuggestion) return;
+  document.getElementById('f-start').value = parseFloat(lastEndSuggestion.endstand).toFixed(3);
+  checkAbweichung();
+}
+
+function checkAbweichung(){
+  const wrap = document.getElementById('abweich-wrap');
+  const startEl = document.getElementById('f-start');
+  if(!wrap || !startEl) return;
+  if(!lastEndSuggestion || startEl.value === ''){
+    wrap.style.display = 'none';
+    return;
+  }
+  const start = parseFloat(startEl.value);
+  if(isNaN(start)){ wrap.style.display='none'; return; }
+  const expected = parseFloat(lastEndSuggestion.endstand);
+  const diff = start - expected;
+  if(Math.abs(diff) < 0.001){
+    wrap.style.display = 'none';
+  }else{
+    document.getElementById('abweich-diff').textContent = (diff>0?'+':'') + diff.toFixed(3);
+    wrap.style.display = 'block';
+  }
+}
+
 // ─── DEVICE ID & REMOTE AKTIV (geteilte Karte) ───
 function getDeviceId(){
   let id = localStorage.getItem('wz_device_id');
@@ -807,6 +940,7 @@ function startScanner(){
     html5QrCode.start(cams[cams.length-1]?.id||cams[0]?.id,{fps:10,qrbox:{width:180,height:180}},(txt)=>{
       document.getElementById('f-standort').value=txt;document.getElementById('qr-text').textContent=txt;document.getElementById('qr-result').style.display='block';
       stopScanner();showToast('✓ Standort übernommen');
+      lookupLastEndstand(txt);
     },()=>{}).catch(()=>showToast('Kamerazugriff fehlgeschlagen'));scannerRunning=true;
   }).catch(()=>{showToast('Keine Kamera');resetQR();});
 }
@@ -815,7 +949,7 @@ function stopScanner(){
   document.getElementById('qr-reader').style.display='none';document.getElementById('btn-stop').style.display='none';
   if(document.getElementById('qr-result').style.display==='none')document.getElementById('qr-idle').style.display='flex';
 }
-function resetQR(){stopScanner();document.getElementById('qr-result').style.display='none';document.getElementById('qr-idle').style.display='flex';document.getElementById('f-standort').value='';}
+function resetQR(){stopScanner();document.getElementById('qr-result').style.display='none';document.getElementById('qr-idle').style.display='flex';document.getElementById('f-standort').value='';clearLastEndSuggestion();}
 
 // ─── BEREGNUNG ───────────────────────────────────
 function getAktiv(){try{return JSON.parse(localStorage.getItem('wz_aktiv')||'[]');}catch{return[];}}
@@ -840,7 +974,10 @@ function onFeldLink(){
   fw.style.display='block';
   const f=getFelder().find(x=>x.id==fid);
   if(f){
-    if(f.zapfstelle) document.getElementById('f-standort').value=f.zapfstelle;
+    if(f.zapfstelle){
+      document.getElementById('f-standort').value=f.zapfstelle;
+      lookupLastEndstand(f.zapfstelle);
+    }
     fa.value='ganz';
     fi.value=f.groesse||'';
     fi.readOnly=true;
@@ -870,10 +1007,24 @@ function beregnungStarten(){
   if(!name||!standort||!start||!kultur){showToast('⚠ Bitte alle Pflichtfelder (inkl. Kultur) ausfüllen');return;}
   const s=parseFloat(start);if(isNaN(s)||s<0){showToast('⚠ Ungültiger Zählerstand');return;}
   
+  // Abweichung vom Vorschlag → Notiz erforderlich
+  let startNote='';
+  if(lastEndSuggestion){
+    const expected = parseFloat(lastEndSuggestion.endstand);
+    if(Math.abs(s-expected) >= 0.001){
+      startNote = document.getElementById('f-startnote').value.trim();
+      if(!startNote){
+        showToast('⚠ Bitte Grund für Abweichung angeben');
+        document.getElementById('f-startnote').focus();
+        return;
+      }
+    }
+  }
+  
   // Gewählte Kultur in die Top 3 der "Recent" speichern
   speichereRecentKultur(kultur);
 
-  const entry={id:Date.now(),name,standort,startstand:s,kultur:kultur,datum:new Date().toISOString(),qr,feldId,flaeche,lat:currentGPS?.lat||null,lng:currentGPS?.lng||null,acc:currentGPS?.acc||null};
+  const entry={id:Date.now(),name,standort,startstand:s,startNote,kultur:kultur,datum:new Date().toISOString(),qr,feldId,flaeche,lat:currentGPS?.lat||null,lng:currentGPS?.lng||null,acc:currentGPS?.acc||null};
   const aktiv=getAktiv();aktiv.push(entry);saveAktiv(aktiv);
   
   // NEU: Live-Vorgang an Server schicken, damit andere ihn auf der Karte sehen
@@ -892,8 +1043,10 @@ function beregnungStarten(){
   document.getElementById('f-start').value='';document.getElementById('f-name').value='';
   document.getElementById('f-feld-link').value='';
   document.getElementById('f-kultur').value='';
+  document.getElementById('f-startnote').value='';
   document.getElementById('flaeche-wrap').style.display='none';
   resetQR();currentGPS=null;
+  clearLastEndSuggestion();
   document.getElementById('gps-chip').className='gps-chip idle';document.getElementById('gps-icon').textContent='📍';document.getElementById('gps-text').textContent='Standort noch nicht abgerufen';
   
   renderAktiv();
@@ -1049,11 +1202,14 @@ async function beregnungBeenden(){
     if (!check) return; 
   }
   
-  // Kultur mit ins Protokoll-Objekt übernehmen
-  const entry={id:Date.now(),name:v.name,standort:v.standort,kultur:v.kultur,startstand:v.startstand,endstand:endVal,wasser:verbrauch,flaeche:v.flaeche,mm:mm,datum:v.datum,endDatum:new Date().toISOString(),qr:v.qr,laufzeit:getElapsed(v.datum),lat:v.lat||null,lng:v.lng||null,feldId:v.feldId||null};
+  // Kultur und Notiz mit ins Protokoll-Objekt übernehmen
+  const entry={id:Date.now(),name:v.name,standort:v.standort,kultur:v.kultur,startstand:v.startstand,startNote:v.startNote||'',endstand:endVal,wasser:verbrauch,flaeche:v.flaeche,mm:mm,datum:v.datum,endDatum:new Date().toISOString(),qr:v.qr,laufzeit:getElapsed(v.datum),lat:v.lat||null,lng:v.lng||null,feldId:v.feldId||null};
   
   // Ins lokale Protokoll
   const local=getLocal();local.unshift(entry);localStorage.setItem('wz_eintraege',JSON.stringify(local));
+  
+  // Cache für „letzten Endstand" aktualisieren (für nächsten Start)
+  updateLastEndCache(v.standort, endVal, entry.endDatum, v.name);
   
   // In die Sende-Warteschlange (Eintrag + Live-Vorgang beenden)
   let queue = JSON.parse(localStorage.getItem('wz_queue') || '[]');
@@ -1244,6 +1400,7 @@ function renderProtokoll(){
         <div class="entry-name">${e.name}</div>
         <div class="entry-sub">📍 ${e.standort}${feldName?` · 🌾 ${feldName}`:''}${e.kultur?` · 🌱 ${e.kultur}`:''}</div>
         <div class="entry-sub">🕐 ${dt}${e.laufzeit?' · ⏱ '+e.laufzeit:''}${e.mm?' · 🌧️ '+e.mm.toFixed(1)+' mm':''}${e.lat?' · 📍':''}</div>
+        ${e.startNote?`<div class="entry-sub" style="color:var(--orange);font-style:italic;margin-top:3px">⚠ ${e.startNote}</div>`:''}
       </div>
       <div class="entry-val">${parseFloat(e.wasser).toFixed(3)}<small>m³</small></div>
     </div>`;

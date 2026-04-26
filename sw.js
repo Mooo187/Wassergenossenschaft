@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wasser-app-v3';
+const CACHE_NAME = 'wasser-app-v4';
 const urlsToCache = [
   './',
   './index.html',
