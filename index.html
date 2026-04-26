@@ -320,7 +320,7 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
       <button class="btn btn-ghost btn-sm" style="width:auto;padding:6px 12px;margin-left:auto" onclick="requestGPS()">Abrufen</button>
     </div>
     
-    <div class="field"><label for="f-name">Ihr Name *</label><input type="text" id="f-name" placeholder="Max Mustermann" autocomplete="name"></div>
+    <div class="field"><label for="f-name">Ihr Name *</label><input type="text" id="f-name" placeholder="In Einstellungen für Auto-Fill speichern" autocomplete="name"></div>
     
     <div class="field">
       <label for="f-feld-link">Feld verknüpfen (optional)</label>
@@ -423,6 +423,30 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
 
 <div class="page" id="page-einstellungen">
   <div class="card">
+    <div class="card-label">👤 Mein Name</div>
+    <div class="field">
+      <label for="s-name">Wird beim Beregnungsstart automatisch eingetragen</label>
+      <input type="text" id="s-name" placeholder="z.B. Max Mustermann" autocomplete="name">
+    </div>
+    <button class="btn btn-primary" onclick="saveUserName()">✓ Speichern</button>
+  </div>
+
+  <div id="url-system-info" style="display:none">
+    <div class="card">
+      <div class="card-label">🔗 Server-Verbindung</div>
+      <div style="display:flex;align-items:flex-start;gap:11px;background:var(--green-bg);border:1px solid rgba(29,158,117,.25);border-radius:var(--r10);padding:.9rem 1rem">
+        <span style="font-size:22px;line-height:1">🔒</span>
+        <div style="flex:1;font-size:13px;line-height:1.5">
+          <strong style="color:var(--green-dark)">Vom System hinterlegt</strong><br>
+          <span style="font-size:12px;color:var(--muted)">Die Server-URL ist fest in der App eingebaut – keine Konfiguration nötig.</span>
+        </div>
+      </div>
+      <button class="btn btn-ghost" style="margin-top:10px" onclick="testConnection()">🔌 Verbindung testen</button>
+      <div class="url-status" id="url-status-sys"></div>
+    </div>
+  </div>
+
+  <div class="card" id="url-card">
     <div class="card-label">🔗 Google Sheets</div>
     <div class="field"><label for="s-url">Web-App URL</label><input type="url" id="s-url" placeholder="https://script.google.com/macros/s/…/exec"><div class="url-status" id="url-status"></div></div>
     <div class="btn-row">
@@ -533,6 +557,19 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
 <div class="toast" id="toast"></div>
 
 <script>
+// ═══════════════════════════════════════════════════════════════
+// APP-KONFIGURATION
+// ───────────────────────────────────────────────────────────────
+// Trage hier die Web-App-URL deines Apps Scripts ein.
+// Solange dieser Wert leer ist, kann jeder Nutzer die URL selbst
+// in den Einstellungen setzen (alter Modus).
+// Sobald hier eine URL steht, ist sie für alle Geräte fix
+// hinterlegt – die URL-Eingabe verschwindet aus den Einstellungen.
+// ═══════════════════════════════════════════════════════════════
+const APP_CONFIG = {
+  webAppUrl: 'https://script.google.com/macros/s/AKfycbza1HAHaFhw8mnDVYz0lCv-sxxGbcFtmR6VXoadhEP67rsblHmFMALmhohbetc7810/exec' // z.B. 'https://script.google.com/macros/s/AKfycb.../exec'
+};
+
 // ─── STATE ───────────────────────────────────────
 let html5QrCode=null,scannerRunning=false,auswertungData=[],activeEndId=null;
 let leafletMap=null,mapMarkers=[],myLocMarker=null,currentGPS=null;
@@ -555,6 +592,7 @@ function init(){
   renderKulturDropdown(); // NEU: Kulturen ins Start-Formular laden
   renderAktiv();
   updateFeldSelector();
+  prefillName(); // Namen aus Einstellungen ins Beregnungs-Formular übernehmen
   
   setInterval(updateTimers,1000);
   setInterval(refreshMapMarkers,5000);
@@ -608,12 +646,51 @@ function speichereRecentKultur(kultur) {
 }
 
 // ─── SETTINGS ───────────────────────────────────
-function getUrl(){return localStorage.getItem('wz_url')||'';}
+function isUrlHardcoded(){ return !!(APP_CONFIG.webAppUrl && APP_CONFIG.webAppUrl.trim()); }
+function getUrl(){
+  if(isUrlHardcoded()) return APP_CONFIG.webAppUrl.trim();
+  return localStorage.getItem('wz_url')||'';
+}
 function getPreis(){return parseFloat(localStorage.getItem('wz_preis')||'0');}
 
+// ─── BENUTZERNAME (einmalig in Einstellungen) ────
+function getUserName(){ return localStorage.getItem('wz_name')||''; }
+function saveUserName(){
+  const n=(document.getElementById('s-name')?.value||'').trim();
+  localStorage.setItem('wz_name', n);
+  // Beregnungs-Feld auch direkt aktualisieren, falls leer oder gleich altem Wert
+  const fn=document.getElementById('f-name');
+  if(fn && !fn.value.trim()) fn.value=n;
+  showToast(n?'✓ Name gespeichert':'Name gelöscht');
+}
+function prefillName(){
+  const el=document.getElementById('f-name');
+  if(el && !el.value) el.value=getUserName();
+}
+
 function loadSettingsUI(){
-  const u=getUrl();if(u)document.getElementById('s-url').value=u;
-  const p=getPreis();if(p){document.getElementById('s-preis').value=p;const pi=document.getElementById('preis-inp');if(pi)pi.value=p;}
+  // URL: Wenn fest hinterlegt, gar kein Eingabefeld zeigen
+  const urlCard=document.getElementById('url-card');
+  const urlInfo=document.getElementById('url-system-info');
+  if(isUrlHardcoded()){
+    if(urlCard) urlCard.style.display='none';
+    if(urlInfo) urlInfo.style.display='block';
+  }else{
+    if(urlCard) urlCard.style.display='block';
+    if(urlInfo) urlInfo.style.display='none';
+    const u=localStorage.getItem('wz_url')||'';
+    const inp=document.getElementById('s-url');
+    if(u && inp) inp.value=u;
+  }
+  // Preis
+  const p=getPreis();
+  if(p){
+    const sp=document.getElementById('s-preis'); if(sp) sp.value=p;
+    const pi=document.getElementById('preis-inp'); if(pi) pi.value=p;
+  }
+  // Name
+  const sn=document.getElementById('s-name');
+  if(sn) sn.value=getUserName();
 }
 function saveSettings(){
   const u=document.getElementById('s-url').value.trim();
@@ -626,12 +703,20 @@ function saveSettings(){
 function savePreis(){const p=document.getElementById('s-preis').value;if(p)localStorage.setItem('wz_preis',p);showToast('✓ Preis gespeichert');}
 
 async function testConnection(){
-  const url=document.getElementById('s-url').value.trim();if(!url){showToast('⚠ URL eingeben');return;}
-  const st=document.getElementById('url-status');st.textContent='⏳ Teste…';st.className='url-status ok';
+  const url=(document.getElementById('s-url')?.value.trim())||getUrl();
+  const setSt=(cls,text)=>['url-status','url-status-sys'].forEach(id=>{
+    const el=document.getElementById(id); if(el){el.className='url-status '+cls; el.textContent=text;}
+  });
+  if(!url){showToast('⚠ Keine URL hinterlegt');return;}
+  setSt('ok','⏳ Teste…');
   try{const r=await fetch(url,{signal:AbortSignal.timeout(8000)});
-    if(r.ok||r.status===0){st.className='url-status ok';st.textContent='✓ Erfolgreich!';localStorage.setItem('wz_url',url);updateSyncStatusUI();}
-    else{st.className='url-status err';st.textContent=`✗ HTTP ${r.status}`;}}
-  catch{st.className='url-status err';st.textContent='✗ Fehlgeschlagen.';}
+    if(r.ok||r.status===0){
+      setSt('ok','✓ Erfolgreich!');
+      if(!isUrlHardcoded()) localStorage.setItem('wz_url',url);
+      updateSyncStatusUI();
+    }
+    else setSt('err',`✗ HTTP ${r.status}`);}
+  catch{setSt('err','✗ Fehlgeschlagen.');}
 }
 
 // ─── LETZTER ENDSTAND – VORSCHLAG ────────────────
@@ -1047,6 +1132,7 @@ function beregnungStarten(){
   document.getElementById('flaeche-wrap').style.display='none';
   resetQR();currentGPS=null;
   clearLastEndSuggestion();
+  prefillName(); // Standard-Name wieder einsetzen für nächste Beregnung
   document.getElementById('gps-chip').className='gps-chip idle';document.getElementById('gps-icon').textContent='📍';document.getElementById('gps-text').textContent='Standort noch nicht abgerufen';
   
   renderAktiv();
