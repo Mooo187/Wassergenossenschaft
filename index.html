@@ -246,7 +246,8 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
     <div id="map-empty-state" class="map-empty"><span class="mei">📍</span><span>Keine aktiven Beregnungen mit GPS</span></div>
     <div id="aktiv-map" style="display:none;height:250px"></div>
     <div class="map-legend" id="map-legend" style="display:none">
-      <div class="leg-item"><div class="leg-dot" style="background:#E67E22"></div>Aktiv</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#E67E22"></div>Eigene Beregnung</div>
+      <div class="leg-item"><div class="leg-dot" style="background:#9B59B6"></div>Andere Teilnehmer</div>
       <div class="leg-item"><div class="leg-dot" style="background:#2A8BBF"></div>Mein Standort</div>
     </div>
   </div>
@@ -513,7 +514,11 @@ function init(){
   setInterval(updateTimers,1000);
   setInterval(refreshMapMarkers,5000);
   
-  window.addEventListener('online', processQueue);
+  // NEU: Geteilte Live-Karte – andere Teilnehmer holen
+  fetchRemoteAktiv();
+  setInterval(fetchRemoteAktiv, 20000);
+  
+  window.addEventListener('online', () => { processQueue(); fetchRemoteAktiv(); });
   window.addEventListener('offline', updateSyncStatusUI);
   setInterval(processQueue, 15000);
   
@@ -582,6 +587,45 @@ async function testConnection(){
     if(r.ok||r.status===0){st.className='url-status ok';st.textContent='✓ Erfolgreich!';localStorage.setItem('wz_url',url);updateSyncStatusUI();}
     else{st.className='url-status err';st.textContent=`✗ HTTP ${r.status}`;}}
   catch{st.className='url-status err';st.textContent='✗ Fehlgeschlagen.';}
+}
+
+// ─── DEVICE ID & REMOTE AKTIV (geteilte Karte) ───
+function getDeviceId(){
+  let id = localStorage.getItem('wz_device_id');
+  if(!id){
+    id = 'd_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,9);
+    localStorage.setItem('wz_device_id', id);
+  }
+  return id;
+}
+function getRemoteAktiv(){try{return JSON.parse(localStorage.getItem('wz_remote_aktiv')||'[]');}catch{return[];}}
+function saveRemoteAktiv(a){localStorage.setItem('wz_remote_aktiv', JSON.stringify(a));}
+
+async function fetchRemoteAktiv(){
+  const url = getUrl();
+  if(!url || !navigator.onLine) return;
+  try{
+    const r = await fetch(url + '?aktiv=1&t=' + Date.now(), {signal:AbortSignal.timeout(10000)});
+    if(!r.ok && r.status !== 0) return;
+    const data = await r.json();
+    if(Array.isArray(data)){
+      // Normalisiere Felder (Apps Script kann Datum als Date-Objekt liefern)
+      const cleaned = data.map(v => ({
+        id: v.id, deviceId: v.deviceId, name: v.name, standort: v.standort,
+        startstand: parseFloat(v.startstand)||0, kultur: v.kultur||'',
+        datum: v.datum ? (typeof v.datum==='string' ? v.datum : new Date(v.datum).toISOString()) : null,
+        lat: parseFloat(v.lat)||null, lng: parseFloat(v.lng)||null,
+        feldName: v.feldName||'', flaeche: parseFloat(v.flaeche)||null
+      })).filter(v => v.id);
+      saveRemoteAktiv(cleaned);
+      // Map und Counter aktualisieren
+      const aktiv = getAktiv();
+      const myId = getDeviceId();
+      const remoteOther = cleaned.filter(v => v.deviceId !== myId);
+      document.getElementById('map-aktiv-count').textContent = aktiv.length + remoteOther.length;
+      renderMap();
+    }
+  }catch(err){ /* still offline o.ä. – einfach beim nächsten Intervall erneut versuchen */ }
 }
 
 // ─── SYNC (WARTESCHLANGE) ────────────────────────
@@ -688,24 +732,48 @@ function initMap(){
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© <a href="https://openstreetmap.org">OpenStreetMap</a>',maxZoom:19}).addTo(leafletMap);
   leafletMap.setView([47.8,14.0],7);
 }
-const MC=['#E67E22','#9B59B6','#E74C3C','#16A085','#2980B9','#8E44AD'];
-function mkIcon(i){
-  const c=MC[i%MC.length];
+const MC_OWN='#E67E22', MC_REMOTE='#9B59B6';
+function mkIcon(color){
+  const c = color || MC_OWN;
   return L.divIcon({className:'',html:`<div style="position:relative;width:28px;height:36px"><div style="position:absolute;bottom:0;left:0;width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${c};border:2.5px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,.3)"></div><div style="position:absolute;bottom:7px;left:7px;width:10px;height:10px;border-radius:50%;background:#fff"></div></div>`,iconSize:[28,36],iconAnchor:[14,36],popupAnchor:[0,-36]});
 }
 function buildPopup(v){
   const dt=v.datum?new Date(v.datum).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
-  return`<div class="popup-name">🌿 ${v.name}</div><div class="popup-row">📍 ${v.standort}</div><div class="popup-row">⏱ <span class="popup-val">${getElapsed(v.datum)}</span></div><div class="popup-row">📊 Anfang: <span class="popup-val">${parseFloat(v.startstand).toFixed(3)} m³</span></div><div class="popup-row">🕐 ${dt}</div>`;
+  const tag = v._isRemote
+    ? '<div style="display:inline-block;font-size:10px;background:#9B59B6;color:#fff;padding:2px 8px;border-radius:50px;font-weight:600;margin-bottom:5px">👥 Anderer Teilnehmer</div>'
+    : '<div style="display:inline-block;font-size:10px;background:#E67E22;color:#fff;padding:2px 8px;border-radius:50px;font-weight:600;margin-bottom:5px">🟠 Eigene</div>';
+  const fName = v.feldName ? `<div class="popup-row">🌾 ${v.feldName}</div>` : '';
+  return`${tag}<div class="popup-name">🌿 ${v.name}</div><div class="popup-row">📍 ${v.standort}</div>${fName}<div class="popup-row">⏱ <span class="popup-val">${getElapsed(v.datum)}</span></div><div class="popup-row">📊 Anfang: <span class="popup-val">${parseFloat(v.startstand).toFixed(3)} m³</span></div><div class="popup-row">🕐 ${dt}</div>`;
 }
-function refreshMapMarkers(){getAktiv().filter(v=>v.lat&&v.lng).forEach(v=>{const m=mapMarkers.find(x=>x._wzId===v.id);if(m)m.setPopupContent(buildPopup(v));});}
+function refreshMapMarkers(){
+  const myId=getDeviceId();
+  const all=[
+    ...getAktiv().map(v=>({...v,_isRemote:false})),
+    ...getRemoteAktiv().filter(v=>v.deviceId!==myId).map(v=>({...v,_isRemote:true}))
+  ];
+  all.filter(v=>v.lat&&v.lng).forEach(v=>{
+    const m=mapMarkers.find(x=>String(x._wzId)===String(v.id));
+    if(m)m.setPopupContent(buildPopup(v));
+  });
+}
 function renderMap(){
-  const aktiv=getAktiv(),withGPS=aktiv.filter(v=>v.lat&&v.lng);
+  const myId=getDeviceId();
+  const local=getAktiv().map(v=>({...v,_isRemote:false}));
+  const remote=getRemoteAktiv().filter(v=>v.deviceId!==myId).map(v=>({...v,_isRemote:true}));
+  const all=[...local,...remote];
+  const withGPS=all.filter(v=>v.lat&&v.lng);
   const mapEl=document.getElementById('aktiv-map'),emptyEl=document.getElementById('map-empty-state');
+  // Karten-Counter zeigt eigene + andere
+  document.getElementById('map-aktiv-count').textContent=all.length;
   if(!withGPS.length){mapEl.style.display='none';emptyEl.style.display='flex';return;}
   emptyEl.style.display='none';mapEl.style.display='block';
   initMap();setTimeout(()=>leafletMap.invalidateSize(),100);
   mapMarkers.forEach(m=>leafletMap.removeLayer(m));mapMarkers=[];
-  withGPS.forEach((v,i)=>{const m=L.marker([v.lat,v.lng],{icon:mkIcon(i)}).addTo(leafletMap);m._wzId=v.id;m.bindPopup(buildPopup(v),{maxWidth:220});mapMarkers.push(m);});
+  withGPS.forEach(v=>{
+    const color=v._isRemote?MC_REMOTE:MC_OWN;
+    const m=L.marker([v.lat,v.lng],{icon:mkIcon(color)}).addTo(leafletMap);
+    m._wzId=v.id;m.bindPopup(buildPopup(v),{maxWidth:240});mapMarkers.push(m);
+  });
   if(currentGPS)updateMyLocationOnMap();
   if(mapMarkers.length===1)leafletMap.setView([withGPS[0].lat,withGPS[0].lng],15);
   else leafletMap.fitBounds(new L.FeatureGroup(mapMarkers).getBounds().pad(0.3));
@@ -794,6 +862,19 @@ function beregnungStarten(){
   const entry={id:Date.now(),name,standort,startstand:s,kultur:kultur,datum:new Date().toISOString(),qr,feldId,flaeche,lat:currentGPS?.lat||null,lng:currentGPS?.lng||null,acc:currentGPS?.acc||null};
   const aktiv=getAktiv();aktiv.push(entry);saveAktiv(aktiv);
   
+  // NEU: Live-Vorgang an Server schicken, damit andere ihn auf der Karte sehen
+  const feldName = feldId ? (getFelder().find(f=>f.id==feldId)?.name||'') : '';
+  const startMsg = {
+    type:'active_start', deviceId:getDeviceId(),
+    id:entry.id, name:entry.name, standort:entry.standort,
+    startstand:entry.startstand, kultur:entry.kultur, datum:entry.datum,
+    lat:entry.lat, lng:entry.lng, feldName, flaeche:entry.flaeche
+  };
+  let q = JSON.parse(localStorage.getItem('wz_queue')||'[]');
+  q.push(startMsg);
+  localStorage.setItem('wz_queue', JSON.stringify(q));
+  processQueue();
+  
   document.getElementById('f-start').value='';document.getElementById('f-name').value='';
   document.getElementById('f-feld-link').value='';
   document.getElementById('f-kultur').value='';
@@ -846,14 +927,25 @@ function renderAktiv(){
 }
 
 function zoomToMarker(id){
-  const v=getAktiv().find(x=>x.id===id);if(!v||!v.lat){showToast('Kein GPS');return;}
+  const myId=getDeviceId();
+  const all=[...getAktiv(),...getRemoteAktiv().filter(v=>v.deviceId!==myId)];
+  const v=all.find(x=>String(x.id)===String(id));if(!v||!v.lat){showToast('Kein GPS');return;}
   if(!leafletMap)return;
-  leafletMap.setView([v.lat,v.lng],16);const m=mapMarkers.find(x=>x._wzId===id);if(m)m.openPopup();
+  leafletMap.setView([v.lat,v.lng],16);const m=mapMarkers.find(x=>String(x._wzId)===String(id));if(m)m.openPopup();
   document.getElementById('map-card-wrap'||'').scrollIntoView?.({behavior:'smooth'});
 }
 function getElapsed(s){if(!s)return'—';const d=Date.now()-new Date(s).getTime();if(isNaN(d)||d<0)return'0:00:00';const h=Math.floor(d/3600000),m=Math.floor((d%3600000)/60000),sec=Math.floor((d%60000)/1000);return`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;}
 function updateTimers(){document.querySelectorAll('[data-start]').forEach(el=>el.textContent=getElapsed(el.getAttribute('data-start')));}
-function aktivLoeschen(id){if(!confirm('Abbrechen?'))return;saveAktiv(getAktiv().filter(v=>v.id!==id));renderAktiv();showToast('Abgebrochen');}
+function aktivLoeschen(id){
+  if(!confirm('Abbrechen?'))return;
+  saveAktiv(getAktiv().filter(v=>v.id!==id));
+  // NEU: Server benachrichtigen, damit die Beregnung von der geteilten Karte verschwindet
+  let q = JSON.parse(localStorage.getItem('wz_queue')||'[]');
+  q.push({type:'active_end', deviceId:getDeviceId(), id});
+  localStorage.setItem('wz_queue', JSON.stringify(q));
+  renderAktiv();showToast('Abgebrochen');
+  processQueue();
+}
 
 // ─── BEENDEN ─────────────────────────────────────
 function openEndModal(id){
@@ -904,9 +996,10 @@ async function beregnungBeenden(){
   // Ins lokale Protokoll
   const local=getLocal();local.unshift(entry);localStorage.setItem('wz_eintraege',JSON.stringify(local));
   
-  // In die Sende-Warteschlange
+  // In die Sende-Warteschlange (Eintrag + Live-Vorgang beenden)
   let queue = JSON.parse(localStorage.getItem('wz_queue') || '[]');
   queue.push(entry);
+  queue.push({type:'active_end', deviceId:getDeviceId(), id:activeEndId});
   localStorage.setItem('wz_queue', JSON.stringify(queue));
 
   // Aus Aktiv entfernen
@@ -1154,7 +1247,10 @@ function gotoPage(id,btn){
   if(id==='protokoll')renderProtokoll();
   if(id==='einstellungen')loadSettingsUI();
   if(id==='felder')renderFelder();
-  if(id==='beregnung'&&leafletMap)setTimeout(()=>leafletMap.invalidateSize(),200);
+  if(id==='beregnung'){
+    fetchRemoteAktiv();
+    if(leafletMap)setTimeout(()=>leafletMap.invalidateSize(),200);
+  }
 }
 function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2800);}
 init();
