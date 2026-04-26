@@ -120,6 +120,19 @@ textarea{resize:vertical;min-height:72px;font-size:14px}
 .aktiv-timer{color:var(--orange);font-weight:600}
 .aktiv-gps-tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--green-dark);background:var(--green-bg);border-radius:var(--r50);padding:2px 8px;margin-top:3px}
 
+/* REMOTE (Andere Teilnehmer) */
+.remote-card{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:var(--r10);border:1.5px solid rgba(155,89,182,.28);background:rgba(155,89,182,.06);margin-bottom:8px;position:relative;overflow:hidden}
+.remote-card::before{content:'';position:absolute;top:0;left:0;width:3px;height:100%;background:#9B59B6}
+.remote-ava{width:36px;height:36px;border-radius:50%;background:#9B59B6;color:#fff;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.remote-info{flex:1;min-width:0}
+.remote-name{font-size:14px;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.remote-sub{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.remote-timer{font-family:'DM Mono',monospace;font-size:13px;font-weight:500;color:#9B59B6;flex-shrink:0;text-align:right;line-height:1}
+.remote-timer-label{font-size:9px;color:var(--muted);font-family:'DM Sans',sans-serif;font-weight:500;text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+.remote-btn{background:transparent;border:1.5px solid rgba(155,89,182,.35);color:#9B59B6;border-radius:var(--r8);padding:7px 11px;font-size:14px;cursor:pointer;flex-shrink:0;font-family:'DM Sans',sans-serif}
+.remote-btn:active{transform:scale(.95)}
+.remote-badge{margin-left:auto;background:rgba(155,89,182,.12);color:#9B59B6;font-size:11px;font-weight:700;padding:2px 9px;border-radius:var(--r50)}
+
 /* MODAL */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;padding:1rem;overflow-y:auto;align-items:flex-start;justify-content:center}
 .modal-overlay.show{display:flex}
@@ -236,7 +249,7 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
 <main>
 
 <div class="page active" id="page-beregnung">
-  <div class="map-card">
+  <div class="map-card" id="map-card-wrap">
     <div class="map-card-header">
       <span style="font-size:16px">🗺️</span>
       <span class="map-card-title">Aktive Standorte</span>
@@ -253,8 +266,13 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
   </div>
 
   <div class="card">
-    <div class="card-label"><span>🟠</span>Aktive Vorgänge<span id="aktiv-count-badge" style="margin-left:auto;background:var(--orange-bg);color:var(--orange);font-size:11px;font-weight:700;padding:2px 9px;border-radius:var(--r50)">0</span></div>
+    <div class="card-label"><span>🟠</span>Eigene aktive Vorgänge<span id="aktiv-count-badge" style="margin-left:auto;background:var(--orange-bg);color:var(--orange);font-size:11px;font-weight:700;padding:2px 9px;border-radius:var(--r50)">0</span></div>
     <div id="aktiv-list"><div class="empty"><span class="ei">💤</span>Keine aktiven Beregnungen</div></div>
+  </div>
+
+  <div class="card" id="remote-card" style="display:none">
+    <div class="card-label"><span>👥</span>Andere Teilnehmer<span class="remote-badge" id="remote-count-badge">0</span></div>
+    <div id="remote-list"></div>
   </div>
 
   <div class="divider">Neuen Vorgang starten</div>
@@ -618,12 +636,8 @@ async function fetchRemoteAktiv(){
         feldName: v.feldName||'', flaeche: parseFloat(v.flaeche)||null
       })).filter(v => v.id);
       saveRemoteAktiv(cleaned);
-      // Map und Counter aktualisieren
-      const aktiv = getAktiv();
-      const myId = getDeviceId();
-      const remoteOther = cleaned.filter(v => v.deviceId !== myId);
-      document.getElementById('map-aktiv-count').textContent = aktiv.length + remoteOther.length;
-      renderMap();
+      // Komplette Aktiv-Sektion neu rendern (inkl. Liste, Map, Counter)
+      renderAktiv();
     }
   }catch(err){ /* still offline o.ä. – einfach beim nächsten Intervall erneut versuchen */ }
 }
@@ -889,8 +903,13 @@ function beregnungStarten(){
 
 function renderAktiv(){
   const aktiv=getAktiv();
+  const myId=getDeviceId();
+  const remote=getRemoteAktiv().filter(v=>v.deviceId!==myId);
+  
   document.getElementById('aktiv-count-badge').textContent=aktiv.length;
-  document.getElementById('map-aktiv-count').textContent=aktiv.length;
+  document.getElementById('map-aktiv-count').textContent=aktiv.length+remote.length;
+  
+  // ── Eigene aktive Vorgänge ──
   const list=document.getElementById('aktiv-list');
   if(!aktiv.length){list.innerHTML='<div class="empty"><span class="ei">💤</span>Keine aktiven Beregnungen</div>';}
   else{
@@ -917,12 +936,51 @@ function renderAktiv(){
         </div>
         <div class="btn-row">
           <button class="btn btn-danger btn-sm" onclick="aktivLoeschen(${v.id})">✕</button>
-          ${v.lat?`<button class="btn btn-ghost btn-sm" onclick="zoomToMarker(${v.id})">🗺️</button>`:''}
+          ${v.lat?`<button class="btn btn-ghost btn-sm" onclick="zoomToMarker('${v.id}')">🗺️</button>`:''}
           <button class="btn btn-sm" style="background:var(--orange);color:#fff" onclick="openEndModal(${v.id})">⏹ Beenden</button>
         </div>
       </div>`;
     }).join('');
   }
+  
+  // ── Andere Teilnehmer ──
+  const rCard=document.getElementById('remote-card');
+  const rList=document.getElementById('remote-list');
+  const rBadge=document.getElementById('remote-count-badge');
+  if(!remote.length){
+    rCard.style.display='none';
+  }else{
+    rCard.style.display='block';
+    rBadge.textContent=remote.length;
+    // Sortierung: zuerst die mit GPS, dann nach Startzeit (älteste zuerst)
+    const sorted=[...remote].sort((a,b)=>{
+      const ga=a.lat?0:1, gb=b.lat?0:1;
+      if(ga!==gb)return ga-gb;
+      return new Date(a.datum||0)-new Date(b.datum||0);
+    });
+    rList.innerHTML=sorted.map(v=>{
+      const ini=(v.name||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)||'?';
+      const subParts=[];
+      if(v.standort)subParts.push('📍 '+v.standort);
+      if(v.feldName)subParts.push('🌾 '+v.feldName);
+      if(v.kultur)subParts.push('🌱 '+v.kultur);
+      const sub=subParts.join(' · ')||'—';
+      const hasGPS=v.lat&&v.lng;
+      return`<div class="remote-card">
+        <div class="remote-ava">${ini}</div>
+        <div class="remote-info">
+          <div class="remote-name">${v.name||'—'}</div>
+          <div class="remote-sub">${sub}</div>
+        </div>
+        <div>
+          <div class="remote-timer" data-start="${v.datum||''}">${getElapsed(v.datum)}</div>
+          <div class="remote-timer-label">${hasGPS?'läuft':'kein GPS'}</div>
+        </div>
+        ${hasGPS?`<button class="remote-btn" onclick="zoomToMarker('${v.id}')" title="Auf Karte zeigen">🗺️</button>`:''}
+      </div>`;
+    }).join('');
+  }
+  
   renderMap();
 }
 
@@ -931,8 +989,9 @@ function zoomToMarker(id){
   const all=[...getAktiv(),...getRemoteAktiv().filter(v=>v.deviceId!==myId)];
   const v=all.find(x=>String(x.id)===String(id));if(!v||!v.lat){showToast('Kein GPS');return;}
   if(!leafletMap)return;
-  leafletMap.setView([v.lat,v.lng],16);const m=mapMarkers.find(x=>String(x._wzId)===String(id));if(m)m.openPopup();
-  document.getElementById('map-card-wrap'||'').scrollIntoView?.({behavior:'smooth'});
+  document.getElementById('map-card-wrap')?.scrollIntoView({behavior:'smooth',block:'start'});
+  leafletMap.setView([v.lat,v.lng],16);
+  const m=mapMarkers.find(x=>String(x._wzId)===String(id));if(m)m.openPopup();
 }
 function getElapsed(s){if(!s)return'—';const d=Date.now()-new Date(s).getTime();if(isNaN(d)||d<0)return'0:00:00';const h=Math.floor(d/3600000),m=Math.floor((d%3600000)/60000),sec=Math.floor((d%60000)/1000);return`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;}
 function updateTimers(){document.querySelectorAll('[data-start]').forEach(el=>el.textContent=getElapsed(el.getAttribute('data-start')));}

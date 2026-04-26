@@ -1,4 +1,4 @@
-const CACHE_NAME = 'wasser-app-v2';
+const CACHE_NAME = 'wasser-app-v3';
 const urlsToCache = [
   './',
   './index.html',
@@ -9,7 +9,7 @@ self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => cache.addAll(urlsToCache))
   );
-  self.skipWaiting(); // neue Version sofort übernehmen
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', event => {
