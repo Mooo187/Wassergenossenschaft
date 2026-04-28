@@ -151,6 +151,12 @@ textarea{resize:vertical;min-height:72px;font-size:14px}
 .abweich-wrap label{font-size:11px;font-weight:600;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
 .abweich-wrap textarea{font-size:13px;min-height:54px;background:var(--card)}
 
+/* Protokoll-Edit */
+.entry-item{position:relative}
+.entry-edit-btn{position:absolute;top:8px;right:8px;background:transparent;border:none;font-size:14px;color:var(--muted);cursor:pointer;padding:6px 8px;border-radius:var(--r8);line-height:1}
+.entry-edit-btn:hover,.entry-edit-btn:active{background:var(--b50);color:var(--b600)}
+.entry-edited-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--orange);background:var(--orange-bg);padding:1px 7px;border-radius:var(--r50);font-weight:600;margin-left:6px;vertical-align:middle}
+
 /* MODAL */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;padding:1rem;overflow-y:auto;align-items:flex-start;justify-content:center}
 .modal-overlay.show{display:flex}
@@ -554,6 +560,29 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
   </div>
 </div>
 
+<div class="modal-overlay" id="edit-entry-modal">
+  <div class="modal-box">
+    <div class="modal-title">✏️ Eintrag bearbeiten</div>
+    <div class="modal-sub" id="edit-entry-sub"></div>
+    <div class="field">
+      <label for="ee-feld">Feld / Acker</label>
+      <select id="ee-feld" onchange="onEditFeldChange()"><option value="">– Kein Feld –</option></select>
+    </div>
+    <div class="field">
+      <label for="ee-flaeche">Fläche (ha)</label>
+      <input type="number" id="ee-flaeche" step="0.01" min="0" placeholder="0.00" inputmode="decimal" oninput="updateEditMmPreview()">
+    </div>
+    <div id="ee-mm-preview" style="font-size:13px;color:var(--b600);font-weight:600;background:var(--b50);padding:9px 12px;border-radius:var(--r10);margin-bottom:12px;display:none"></div>
+    <div style="font-size:12px;color:var(--muted);background:var(--b50);border-left:3px solid var(--b600);padding:9px 12px;border-radius:var(--r8);margin-bottom:14px;line-height:1.5">
+      ℹ Die bestehende Zeile in der Tabelle wird durch die neuen Werte ersetzt.
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="closeEditEntryModal()">Abbrechen</button>
+      <button class="btn btn-primary" onclick="saveEditEntry()">✓ Speichern</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -567,7 +596,7 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
 // hinterlegt – die URL-Eingabe verschwindet aus den Einstellungen.
 // ═══════════════════════════════════════════════════════════════
 const APP_CONFIG = {
-  webAppUrl: 'https://script.google.com/macros/s/AKfycbza1HAHaFhw8mnDVYz0lCv-sxxGbcFtmR6VXoadhEP67rsblHmFMALmhohbetc7810/exec' // z.B. 'https://script.google.com/macros/s/AKfycb.../exec'
+  webAppUrl: '' // z.B. 'https://script.google.com/macros/s/AKfycb.../exec'
 };
 
 // ─── STATE ───────────────────────────────────────
@@ -1480,12 +1509,14 @@ function renderProtokoll(){
     const ini=e.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
     const dt=e.datum?new Date(e.datum).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
     const feldName=e.feldId?getFelder().find(f=>f.id==e.feldId)?.name:'';
+    const editedBadge=e.editiert?`<span class="entry-edited-badge">✏️ bearbeitet</span>`:'';
     return`<div class="entry-item">
+      <button class="entry-edit-btn" onclick="openEditEntryModal(${e.id})" title="Feld/Fläche bearbeiten">✏️</button>
       <div class="ava">${ini}</div>
       <div class="entry-info">
-        <div class="entry-name">${e.name}</div>
-        <div class="entry-sub">📍 ${e.standort}${feldName?` · 🌾 ${feldName}`:''}${e.kultur?` · 🌱 ${e.kultur}`:''}</div>
-        <div class="entry-sub">🕐 ${dt}${e.laufzeit?' · ⏱ '+e.laufzeit:''}${e.mm?' · 🌧️ '+e.mm.toFixed(1)+' mm':''}${e.lat?' · 📍':''}</div>
+        <div class="entry-name">${e.name}${editedBadge}</div>
+        <div class="entry-sub">📍 ${e.standort}${feldName?` · 🌾 ${feldName}`:''}${e.flaeche?` · 📐 ${parseFloat(e.flaeche).toFixed(2)} ha`:''}${e.kultur?` · 🌱 ${e.kultur}`:''}</div>
+        <div class="entry-sub">🕐 ${dt}${e.laufzeit?' · ⏱ '+e.laufzeit:''}${e.mm?' · 🌧️ '+parseFloat(e.mm).toFixed(1)+' mm':''}${e.lat?' · 📍':''}</div>
         ${e.startNote?`<div class="entry-sub" style="color:var(--orange);font-style:italic;margin-top:3px">⚠ ${e.startNote}</div>`:''}
       </div>
       <div class="entry-val">${parseFloat(e.wasser).toFixed(3)}<small>m³</small></div>
@@ -1494,6 +1525,109 @@ function renderProtokoll(){
 }
 function alleLoeschen(){if(!confirm('Alle lokalen Einträge löschen?'))return;localStorage.removeItem('wz_eintraege');renderProtokoll();showToast('Gelöscht');}
 function exportCSVLocal(){downloadCSV(getLocal(),'protokoll');}
+
+// ─── PROTOKOLL: EINTRAG BEARBEITEN ──────────────
+let editingEntryId=null;
+
+function openEditEntryModal(id){
+  const e=getLocal().find(x=>x.id===id);
+  if(!e){showToast('Eintrag nicht gefunden');return;}
+  editingEntryId=id;
+  
+  // Feld-Dropdown aus aktueller Felderliste füllen
+  const sel=document.getElementById('ee-feld');
+  sel.innerHTML='<option value="">– Kein Feld –</option>'+
+    getFelder().map(f=>`<option value="${f.id}" data-groesse="${f.groesse||''}" ${String(f.id)===String(e.feldId)?'selected':''}>${f.name}${f.groesse?' ('+f.groesse+' ha)':''}</option>`).join('');
+  
+  document.getElementById('ee-flaeche').value=e.flaeche!=null?e.flaeche:'';
+  document.getElementById('edit-entry-sub').textContent=`${e.name} – ${e.standort} · ${parseFloat(e.wasser).toFixed(3)} m³`;
+  
+  updateEditMmPreview();
+  document.getElementById('edit-entry-modal').classList.add('show');
+}
+
+function closeEditEntryModal(){
+  document.getElementById('edit-entry-modal').classList.remove('show');
+  editingEntryId=null;
+}
+
+function onEditFeldChange(){
+  const sel=document.getElementById('ee-feld');
+  const opt=sel.options[sel.selectedIndex];
+  const g=opt?opt.getAttribute('data-groesse'):'';
+  if(g) document.getElementById('ee-flaeche').value=g;
+  updateEditMmPreview();
+}
+
+function updateEditMmPreview(){
+  const e=getLocal().find(x=>x.id===editingEntryId);
+  if(!e) return;
+  const flaeche=parseFloat(document.getElementById('ee-flaeche').value);
+  const prev=document.getElementById('ee-mm-preview');
+  if(flaeche>0 && e.wasser){
+    const mm=e.wasser/(flaeche*10);
+    prev.textContent=`🌧️ Niederschlag: ${mm.toFixed(1)} mm (l/m²)`;
+    prev.style.display='block';
+  }else{
+    prev.style.display='none';
+  }
+}
+
+function saveEditEntry(){
+  if(!editingEntryId) return;
+  const local=getLocal();
+  const idx=local.findIndex(x=>x.id===editingEntryId);
+  if(idx<0){showToast('Eintrag nicht gefunden');return;}
+  const orig=local[idx];
+  
+  const newFeldId=document.getElementById('ee-feld').value||null;
+  const newFlaecheVal=document.getElementById('ee-flaeche').value;
+  const newFlaeche=newFlaecheVal===''?null:parseFloat(newFlaecheVal);
+  
+  if(newFlaecheVal!==''&&(isNaN(newFlaeche)||newFlaeche<=0)){
+    showToast('⚠ Ungültige Fläche');return;
+  }
+  
+  // Hat sich überhaupt etwas geändert?
+  const sameField=String(newFeldId||'')===String(orig.feldId||'');
+  const sameArea=parseFloat(orig.flaeche||0)===parseFloat(newFlaeche||0);
+  if(sameField&&sameArea){
+    closeEditEntryModal();
+    showToast('Keine Änderung');
+    return;
+  }
+  
+  const newMm=newFlaeche?(orig.wasser/(newFlaeche*10)):null;
+  
+  // Lokal: bestehenden Eintrag mit neuen Werten aktualisieren + Edit-Marker
+  const updated={
+    ...orig,
+    feldId:newFeldId,
+    flaeche:newFlaeche,
+    mm:newMm,
+    editiert:new Date().toISOString()
+  };
+  local[idx]=updated;
+  localStorage.setItem('wz_eintraege',JSON.stringify(local));
+  
+  // Server: Vorhandene Zeile direkt ersetzen (gleiche id)
+  const updateMsg={
+    type:'update_entry',
+    id:updated.id,
+    feldId:updated.feldId,
+    flaeche:updated.flaeche,
+    mm:updated.mm,
+    editiert:updated.editiert
+  };
+  let q=JSON.parse(localStorage.getItem('wz_queue')||'[]');
+  q.push(updateMsg);
+  localStorage.setItem('wz_queue',JSON.stringify(q));
+  processQueue();
+  
+  closeEditEntryModal();
+  renderProtokoll();
+  showToast('✓ Eintrag aktualisiert');
+}
 
 // ─── AUSWERTUNG ──────────────────────────────────
 function fillJahre(){const sel=document.getElementById('sel-jahr'),y=new Date().getFullYear();for(let i=y;i>=y-5;i--){const o=document.createElement('option');o.value=i;o.textContent=i;sel.appendChild(o);}sel.value=y;}
