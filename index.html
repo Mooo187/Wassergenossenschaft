@@ -1668,10 +1668,55 @@ function renderProtokoll(){
   }).join('');
 }
 // ─── RAINSTAR-RECHNER ────────────────────────────
-// Vereinfachte Hydraulik-Formeln für Kreisdüsen-Regner.
-// Q (m³/h) = 36 * Cd * d² * sqrt(2*g*p) * 3600 / 1e6  ≈  3.477 * d² * sqrt(p)
-//   d in mm, p in bar, Cd≈0.95
-// Wurfweite (m) ≈ 1.35 * sqrt(d * p)  – empirisch, gilt für Sektorbetrieb 320°
+// Werte basieren auf typischen Herstellerangaben (Bauer, Beinlich, Ocmis)
+// für Großflächen-Sektorregner. Interpoliert zwischen Stützstellen.
+
+// Lookup-Tabelle: { düse_mm: { druck_bar: [Q m³/h, Wurfradius m] } }
+const RAINSTAR_TABLE = {
+  14: { 4:[16, 36], 5:[18, 38], 6:[20, 40], 7:[22, 42] },
+  16: { 4:[21, 39], 5:[24, 42], 6:[26, 44], 7:[28, 46] },
+  18: { 4:[27, 42], 5:[30, 45], 6:[33, 48], 7:[36, 50] },
+  20: { 4:[33, 45], 5:[37, 49], 6:[41, 52], 7:[44, 54] },
+  22: { 4:[40, 48], 5:[45, 52], 6:[49, 55], 7:[53, 58] },
+  24: { 4:[48, 51], 5:[54, 55], 6:[59, 58], 7:[64, 61] },
+  26: { 4:[57, 54], 5:[64, 58], 6:[70, 62], 7:[76, 65] },
+  28: { 4:[66, 57], 5:[74, 61], 6:[81, 65], 7:[88, 68] },
+  30: { 4:[76, 60], 5:[85, 64], 6:[93, 68], 7:[101, 71] }
+};
+
+// Lineare Interpolation zwischen Stützstellen
+function interpRainstar(d, p){
+  const dKeys = Object.keys(RAINSTAR_TABLE).map(Number).sort((a,b)=>a-b);
+  const pKeys = [4,5,6,7];
+  const clamp = (v, arr) => Math.max(arr[0], Math.min(arr[arr.length-1], v));
+  d = clamp(d, dKeys);
+  p = clamp(p, pKeys);
+  
+  const findBounds = (val, arr) => {
+    let lo = arr[0], hi = arr[arr.length-1];
+    for(let i=0; i<arr.length-1; i++){
+      if(val >= arr[i] && val <= arr[i+1]){ lo = arr[i]; hi = arr[i+1]; break; }
+    }
+    return [lo, hi];
+  };
+  const [d0, d1] = findBounds(d, dKeys);
+  const [p0, p1] = findBounds(p, pKeys);
+  
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const tD = d1===d0 ? 0 : (d-d0)/(d1-d0);
+  const tP = p1===p0 ? 0 : (p-p0)/(p1-p0);
+  
+  // bilineare Interpolation für Q und r
+  const v = (key) => {
+    const q00 = RAINSTAR_TABLE[d0][p0][key];
+    const q01 = RAINSTAR_TABLE[d0][p1][key];
+    const q10 = RAINSTAR_TABLE[d1][p0][key];
+    const q11 = RAINSTAR_TABLE[d1][p1][key];
+    return lerp(lerp(q00, q01, tP), lerp(q10, q11, tP), tD);
+  };
+  return { Q: v(0), r: v(1) };
+}
+
 function rechneRainstar(){
   const d = parseFloat(document.getElementById('cd-duese').value);
   const p = parseFloat(document.getElementById('cd-druck').value);
@@ -1683,23 +1728,17 @@ function rechneRainstar(){
     return;
   }
   
-  // Volumenstrom in m³/h
-  const Q = 3.477 * d * d * Math.sqrt(p);
-  // Wurfweite (Radius) in m
-  const wurfweite = 1.35 * Math.sqrt(d * p);
-  // Bahnabstand: Standard 0.7 × Durchmesser (= 1.4 × Radius)
-  const bahn = wurfweite * 1.4;
-  
-  // Einzuggeschwindigkeit: m/h = Q (m³/h) / (Bahn (m) × mm × 0.001 × 1000)
-  //                            = Q / (Bahn × mm) × 1000   [weil 1mm = 0.001m und × 1m² = 0.001m³]
-  // genauer: pro m Vorschub × Bahn Breite × mm/1000 = Wassermenge in m³
-  // also: Q [m³/h] / (Bahn [m] × mm/1000) = m/h
+  const { Q, r } = interpRainstar(d, p);
+  // Bahnabstand: 0,7 × Wurfdurchmesser = 1,4 × Radius (Praxis-Standard)
+  const bahn = 1.4 * r;
+  // Einzuggeschwindigkeit: m/h = Q [m³/h] / (Bahn [m] × mm/1000)
   const speed = Q / (bahn * mm / 1000);
   
-  // Praxis-Sanity
   let warn = '';
-  if(speed < 5)   warn = '⚠ Sehr langsame Einzug-Geschwindigkeit – Stillstandsgefahr beim Rainstar möglich.';
-  if(speed > 120) warn = '⚠ Sehr hohe Einzug-Geschwindigkeit – mm-Wert evtl. zu niedrig oder Düse zu groß.';
+  if(d < 14 || d > 30) warn = '⚠ Düsendurchmesser außerhalb Tabellenbereich (14–30 mm), Wert geschätzt.';
+  else if(p < 4 || p > 7) warn = '⚠ Druck außerhalb Tabellenbereich (4–7 bar), Wert geschätzt.';
+  else if(speed < 5)  warn = '⚠ Sehr langsam – Stillstandsgefahr. mm-Wert evtl. zu hoch.';
+  else if(speed > 100) warn = '⚠ Sehr schnell – mm-Wert evtl. zu niedrig.';
   
   wrap.innerHTML = `
     <div class="calc-result">
