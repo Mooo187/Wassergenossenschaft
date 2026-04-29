@@ -157,6 +157,30 @@ textarea{resize:vertical;min-height:72px;font-size:14px}
 .entry-edit-btn:hover,.entry-edit-btn:active{background:var(--b50);color:var(--b600)}
 .entry-edited-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--orange);background:var(--orange-bg);padding:1px 7px;border-radius:var(--r50);font-weight:600;margin-left:6px;vertical-align:middle}
 
+/* PAUSE-Status */
+.aktiv-card.paused{filter:saturate(.55);opacity:.86}
+.aktiv-card.paused .aktiv-pulse{animation:none;background:#7d8a96}
+.aktiv-card.paused .aktiv-timer{color:#7d8a96}
+.pause-badge{font-size:11px;background:rgba(125,138,150,.18);color:#5c6770;padding:3px 9px;border-radius:var(--r50);font-weight:700;border:1px solid rgba(125,138,150,.35)}
+.btn-pause{background:#7d8a96;color:#fff}
+.btn-resume{background:var(--green);color:#fff}
+.remote-card.paused{filter:saturate(.55)}
+.remote-card.paused::before{background:#7d8a96}
+.remote-card.paused .remote-ava{background:#7d8a96}
+.remote-card.paused .remote-timer{color:#7d8a96}
+
+/* RAINSTAR-RECHNER */
+.calc-result{margin-top:14px;padding:14px;border-radius:var(--r12);background:linear-gradient(135deg,var(--b600),var(--b700));color:#fff;text-align:center}
+.calc-result-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;opacity:.75;font-weight:600}
+.calc-result-val{font-family:'DM Mono',monospace;font-size:34px;font-weight:500;line-height:1.1;margin-top:2px}
+.calc-result-unit{font-size:14px;opacity:.85;margin-left:4px}
+.calc-aux-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}
+.calc-aux{background:var(--b50);border-radius:var(--r10);padding:9px 11px}
+.calc-aux-label{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.calc-aux-val{font-family:'DM Mono',monospace;font-size:15px;font-weight:500;color:var(--b700);margin-top:2px}
+.calc-error{margin-top:14px;padding:11px 14px;border-radius:var(--r10);background:var(--orange-bg);color:var(--orange);font-size:13px;border:1px solid rgba(230,126,34,.4)}
+.calc-info{font-size:11px;color:var(--muted);background:var(--b50);padding:8px 11px;border-radius:var(--r8);border-left:3px solid var(--b600);line-height:1.5;margin-top:8px}
+
 /* MODAL */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;padding:1rem;overflow-y:auto;align-items:flex-start;justify-content:center}
 .modal-overlay.show{display:flex}
@@ -265,6 +289,7 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
 <nav class="nav">
   <button class="nav-btn active" onclick="gotoPage('beregnung',this)"><span class="ni">🌿</span>Beregnung</button>
   <button class="nav-btn" onclick="gotoPage('felder',this)"><span class="ni">🌾</span>Felder</button>
+  <button class="nav-btn" onclick="gotoPage('rechner',this)"><span class="ni">🧮</span>Rechner</button>
   <button class="nav-btn" onclick="gotoPage('auswertung',this)"><span class="ni">📊</span>Auswertung</button>
   <button class="nav-btn" onclick="gotoPage('protokoll',this)"><span class="ni">📋</span>Protokoll</button>
   <button class="nav-btn" onclick="gotoPage('einstellungen',this)"><span class="ni">⚙️</span>Einstellungen</button>
@@ -374,6 +399,32 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
     <button class="btn btn-brown btn-sm" style="width:auto;padding:9px 16px" onclick="openFeldModal()">+ Acker</button>
   </div>
   <div id="felder-list"></div>
+</div>
+
+<div class="page" id="page-rechner">
+  <div class="card">
+    <div class="card-label">🧮 Rainstar – Einzuggeschwindigkeit</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.5">
+      Berechnet, wie schnell der Rainstar einziehen muss, damit eine gewünschte Niederschlagsmenge fällt.
+    </div>
+    <div class="row2">
+      <div class="field">
+        <label for="cd-duese">Düsendurchmesser (mm)</label>
+        <input type="number" id="cd-duese" step="0.5" min="0" inputmode="decimal" placeholder="z.B. 22" oninput="rechneRainstar()">
+      </div>
+      <div class="field">
+        <label for="cd-druck">Beregnungsdruck (bar)</label>
+        <input type="number" id="cd-druck" step="0.5" min="0" inputmode="decimal" placeholder="z.B. 6" oninput="rechneRainstar()">
+      </div>
+    </div>
+    <div class="field">
+      <label for="cd-mm">Gewünschter Niederschlag (mm = l/m²)</label>
+      <input type="number" id="cd-mm" step="1" min="0" inputmode="decimal" placeholder="z.B. 25" oninput="rechneRainstar()">
+    </div>
+
+    <div id="cd-result-wrap"></div>
+    <div class="calc-info">ℹ Werte für Wurfweite und Volumenstrom basieren auf Standard-Tabellen (Kreisdüsen-Regner). Im Praxiseinsatz ±10–15 % möglich – Wind und Druckabfall einrechnen!</div>
+  </div>
 </div>
 
 <div class="page" id="page-auswertung">
@@ -880,7 +931,9 @@ async function fetchRemoteAktiv(){
         startstand: parseFloat(v.startstand)||0, kultur: v.kultur||'',
         datum: v.datum ? (typeof v.datum==='string' ? v.datum : new Date(v.datum).toISOString()) : null,
         lat: parseFloat(v.lat)||null, lng: parseFloat(v.lng)||null,
-        feldName: v.feldName||'', flaeche: parseFloat(v.flaeche)||null
+        feldName: v.feldName||'', flaeche: parseFloat(v.flaeche)||null,
+        pausedAt: v.pausedAt ? (typeof v.pausedAt==='string' ? v.pausedAt : new Date(v.pausedAt).toISOString()) : null,
+        pausedTotal: parseFloat(v.pausedTotal)||0
       })).filter(v => v.id);
       saveRemoteAktiv(cleaned);
       // Komplette Aktiv-Sektion neu rendern (inkl. Liste, Map, Counter)
@@ -1147,7 +1200,8 @@ function beregnungStarten(){
     type:'active_start', deviceId:getDeviceId(),
     id:entry.id, name:entry.name, standort:entry.standort,
     startstand:entry.startstand, kultur:entry.kultur, datum:entry.datum,
-    lat:entry.lat, lng:entry.lng, feldName, flaeche:entry.flaeche
+    lat:entry.lat, lng:entry.lng, feldName, flaeche:entry.flaeche,
+    pausedAt:'', pausedTotal:0
   };
   let q = JSON.parse(localStorage.getItem('wz_queue')||'[]');
   q.push(startMsg);
@@ -1185,7 +1239,11 @@ function renderAktiv(){
       const dt=v.datum?new Date(v.datum).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
       const gpsTag=v.lat?`<div class="aktiv-gps-tag">📍 ${v.lat.toFixed(4)}, ${v.lng.toFixed(4)}</div>`:`<div style="font-size:11px;color:var(--hint);margin-top:2px">Kein GPS</div>`;
       const feldName=v.feldId?getFelder().find(f=>f.id==v.feldId)?.name:'';
-      return`<div class="aktiv-card">
+      const isPaused=!!v.pausedAt;
+      const statusBadge = isPaused
+        ? `<div class="pause-badge">⏸ PAUSE</div>`
+        : `<div style="font-size:11px;background:var(--orange-bg);color:var(--orange);padding:3px 9px;border-radius:var(--r50);font-weight:700;border:1px solid rgba(230,126,34,.3)">AKTIV</div>`;
+      return`<div class="aktiv-card${isPaused?' paused':''}">
         <div class="aktiv-header">
           <div class="aktiv-pulse"></div>
           <div style="flex:1">
@@ -1193,18 +1251,19 @@ function renderAktiv(){
             <div class="aktiv-sub">📍 ${v.standort}${feldName?` · 🌾 ${feldName}`:''}${v.kultur?` · 🌱 ${v.kultur}`:''}</div>
             ${gpsTag}
           </div>
-          <div style="font-size:11px;background:var(--orange-bg);color:var(--orange);padding:3px 9px;border-radius:var(--r50);font-weight:700;border:1px solid rgba(230,126,34,.3)">AKTIV</div>
+          ${statusBadge}
         </div>
         <div class="aktiv-stats">
           <div class="aktiv-stat"><div class="aktiv-stat-label">Anfangsstand</div><div class="aktiv-stat-val">${parseFloat(v.startstand).toFixed(3)} m³</div></div>
           ${v.flaeche?`<div class="aktiv-stat"><div class="aktiv-stat-label">Fläche</div><div class="aktiv-stat-val">${v.flaeche} ha</div></div>`:''}
           <div class="aktiv-stat"><div class="aktiv-stat-label">Gestartet</div><div class="aktiv-stat-val" style="font-size:12px">${dt}</div></div>
-          <div class="aktiv-stat"><div class="aktiv-stat-label">Laufzeit</div><div class="aktiv-stat-val aktiv-timer" data-start="${v.datum}" id="timer-${v.id}">${getElapsed(v.datum)}</div></div>
+          <div class="aktiv-stat"><div class="aktiv-stat-label">Laufzeit (netto)</div><div class="aktiv-stat-val aktiv-timer" data-aktiv-id="${v.id}">${getElapsed(v)}</div></div>
           <div class="aktiv-stat"><div class="aktiv-stat-label">GPS</div><div class="aktiv-stat-val" style="font-size:12px;color:${v.lat?'var(--green)':'var(--muted)'}">${v.lat?'✓ Erfasst':'Nicht verfügbar'}</div></div>
         </div>
         <div class="btn-row">
           <button class="btn btn-danger btn-sm" onclick="aktivLoeschen(${v.id})">✕</button>
           ${v.lat?`<button class="btn btn-ghost btn-sm" onclick="zoomToMarker('${v.id}')">🗺️</button>`:''}
+          <button class="btn btn-sm ${isPaused?'btn-resume':'btn-pause'}" onclick="togglePause(${v.id})">${isPaused?'▶ Fortsetzen':'⏸ Pause'}</button>
           <button class="btn btn-sm" style="background:var(--orange);color:#fff" onclick="openEndModal(${v.id})">⏹ Beenden</button>
         </div>
       </div>`;
@@ -1220,7 +1279,6 @@ function renderAktiv(){
   }else{
     rCard.style.display='block';
     rBadge.textContent=remote.length;
-    // Sortierung: zuerst die mit GPS, dann nach Startzeit (älteste zuerst)
     const sorted=[...remote].sort((a,b)=>{
       const ga=a.lat?0:1, gb=b.lat?0:1;
       if(ga!==gb)return ga-gb;
@@ -1234,15 +1292,17 @@ function renderAktiv(){
       if(v.kultur)subParts.push('🌱 '+v.kultur);
       const sub=subParts.join(' · ')||'—';
       const hasGPS=v.lat&&v.lng;
-      return`<div class="remote-card">
+      const isPaused=!!v.pausedAt;
+      const lbl = isPaused ? '⏸ pausiert' : (hasGPS?'läuft':'kein GPS');
+      return`<div class="remote-card${isPaused?' paused':''}">
         <div class="remote-ava">${ini}</div>
         <div class="remote-info">
           <div class="remote-name">${v.name||'—'}</div>
           <div class="remote-sub">${sub}</div>
         </div>
         <div>
-          <div class="remote-timer" data-start="${v.datum||''}">${getElapsed(v.datum)}</div>
-          <div class="remote-timer-label">${hasGPS?'läuft':'kein GPS'}</div>
+          <div class="remote-timer" data-remote-id="${v.id}">${getElapsed(v)}</div>
+          <div class="remote-timer-label">${lbl}</div>
         </div>
         ${hasGPS?`<button class="remote-btn" onclick="zoomToMarker('${v.id}')" title="Auf Karte zeigen">🗺️</button>`:''}
       </div>`;
@@ -1261,8 +1321,86 @@ function zoomToMarker(id){
   leafletMap.setView([v.lat,v.lng],16);
   const m=mapMarkers.find(x=>String(x._wzId)===String(id));if(m)m.openPopup();
 }
-function getElapsed(s){if(!s)return'—';const d=Date.now()-new Date(s).getTime();if(isNaN(d)||d<0)return'0:00:00';const h=Math.floor(d/3600000),m=Math.floor((d%3600000)/60000),sec=Math.floor((d%60000)/1000);return`${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;}
-function updateTimers(){document.querySelectorAll('[data-start]').forEach(el=>el.textContent=getElapsed(el.getAttribute('data-start')));}
+// Reine Differenz (in ms), abzgl. Pausenzeit
+function getElapsedMs(start, pausedTotal=0, pausedAt=null){
+  if(!start) return 0;
+  const startMs = new Date(start).getTime();
+  if(isNaN(startMs)) return 0;
+  let total = Date.now() - startMs - (pausedTotal||0);
+  if(pausedAt){ total -= (Date.now() - new Date(pausedAt).getTime()); }
+  return Math.max(0, total);
+}
+function fmtElapsed(ms){
+  if(ms==null||isNaN(ms)) return '0:00:00';
+  const h=Math.floor(ms/3600000),m=Math.floor((ms%3600000)/60000),s=Math.floor((ms%60000)/1000);
+  return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+// Backwards-kompatibel: nimmt entweder ein Date/String oder ein Aktiv-Objekt
+function getElapsed(arg){
+  if(!arg) return '—';
+  if(typeof arg === 'object' && arg.datum){
+    return fmtElapsed(getElapsedMs(arg.datum, arg.pausedTotal||0, arg.pausedAt||null));
+  }
+  return fmtElapsed(getElapsedMs(arg, 0, null));
+}
+
+// Update aller Timer im DOM – berücksichtigt Pause-Status
+function updateTimers(){
+  // Eigene Aktive: nutzen [data-aktiv-id], damit wir Pause-Daten kennen
+  const myAkt = getAktiv();
+  document.querySelectorAll('[data-aktiv-id]').forEach(el=>{
+    const id = el.getAttribute('data-aktiv-id');
+    const v = myAkt.find(x=>String(x.id)===String(id));
+    if(v) el.textContent = getElapsed(v);
+  });
+  // Andere Teilnehmer / generische data-start
+  const myId = getDeviceId();
+  const remote = getRemoteAktiv().filter(v=>v.deviceId!==myId);
+  document.querySelectorAll('[data-remote-id]').forEach(el=>{
+    const id = el.getAttribute('data-remote-id');
+    const v = remote.find(x=>String(x.id)===String(id));
+    if(v) el.textContent = getElapsed(v);
+  });
+  // Fallback für alte Markup-Stellen ohne id-Attribut
+  document.querySelectorAll('[data-start]:not([data-aktiv-id]):not([data-remote-id])').forEach(el=>{
+    el.textContent = getElapsed(el.getAttribute('data-start'));
+  });
+}
+
+function togglePause(id){
+  const aktiv = getAktiv();
+  const v = aktiv.find(x=>x.id===id);
+  if(!v) return;
+  const now = new Date().toISOString();
+  if(v.pausedAt){
+    // Resume
+    const dur = Date.now() - new Date(v.pausedAt).getTime();
+    v.pausedTotal = (v.pausedTotal||0) + Math.max(0, dur);
+    v.pausedAt = null;
+  }else{
+    // Pause
+    v.pausedAt = now;
+  }
+  saveAktiv(aktiv);
+  
+  // Server: Status-Update als active_start re-broadcast (gleiche id → wird ersetzt)
+  const feldName = v.feldId ? (getFelder().find(f=>f.id==v.feldId)?.name||'') : '';
+  const msg = {
+    type:'active_start', deviceId:getDeviceId(),
+    id:v.id, name:v.name, standort:v.standort,
+    startstand:v.startstand, kultur:v.kultur, datum:v.datum,
+    lat:v.lat, lng:v.lng, feldName, flaeche:v.flaeche,
+    pausedAt:v.pausedAt||'', pausedTotal:v.pausedTotal||0
+  };
+  let q = JSON.parse(localStorage.getItem('wz_queue')||'[]');
+  q.push(msg);
+  localStorage.setItem('wz_queue', JSON.stringify(q));
+  processQueue();
+  
+  renderAktiv();
+  showToast(v.pausedAt ? '⏸ Pausiert' : '▶ Fortgesetzt');
+}
+
 function aktivLoeschen(id){
   if(!confirm('Abbrechen?'))return;
   saveAktiv(getAktiv().filter(v=>v.id!==id));
@@ -1318,7 +1456,13 @@ async function beregnungBeenden(){
   }
   
   // Kultur und Notiz mit ins Protokoll-Objekt übernehmen
-  const entry={id:Date.now(),name:v.name,standort:v.standort,kultur:v.kultur,startstand:v.startstand,startNote:v.startNote||'',endstand:endVal,wasser:verbrauch,flaeche:v.flaeche,mm:mm,datum:v.datum,endDatum:new Date().toISOString(),qr:v.qr,laufzeit:getElapsed(v.datum),lat:v.lat||null,lng:v.lng||null,feldId:v.feldId||null};
+  // Falls noch pausiert: laufende Pause in Summe schlagen
+  let pausedTotal = v.pausedTotal||0;
+  if(v.pausedAt) pausedTotal += Math.max(0, Date.now() - new Date(v.pausedAt).getTime());
+  const netMs = getElapsedMs(v.datum, pausedTotal, null);
+  const grossMs = Date.now() - new Date(v.datum).getTime();
+  
+  const entry={id:Date.now(),name:v.name,standort:v.standort,kultur:v.kultur,startstand:v.startstand,startNote:v.startNote||'',endstand:endVal,wasser:verbrauch,flaeche:v.flaeche,mm:mm,datum:v.datum,endDatum:new Date().toISOString(),qr:v.qr,laufzeit:fmtElapsed(netMs),laufzeitBrutto:fmtElapsed(grossMs),pausenZeit:fmtElapsed(pausedTotal),lat:v.lat||null,lng:v.lng||null,feldId:v.feldId||null};
   
   // Ins lokale Protokoll
   const local=getLocal();local.unshift(entry);localStorage.setItem('wz_eintraege',JSON.stringify(local));
@@ -1523,6 +1667,49 @@ function renderProtokoll(){
     </div>`;
   }).join('');
 }
+// ─── RAINSTAR-RECHNER ────────────────────────────
+// Vereinfachte Hydraulik-Formeln für Kreisdüsen-Regner.
+// Q (m³/h) = 36 * Cd * d² * sqrt(2*g*p) * 3600 / 1e6  ≈  3.477 * d² * sqrt(p)
+//   d in mm, p in bar, Cd≈0.95
+// Wurfweite (m) ≈ 1.35 * sqrt(d * p)  – empirisch, gilt für Sektorbetrieb 320°
+function rechneRainstar(){
+  const d = parseFloat(document.getElementById('cd-duese').value);
+  const p = parseFloat(document.getElementById('cd-druck').value);
+  const mm = parseFloat(document.getElementById('cd-mm').value);
+  const wrap = document.getElementById('cd-result-wrap');
+  
+  if(!d || !p || !mm || d<=0 || p<=0 || mm<=0){
+    wrap.innerHTML = '<div class="calc-info" style="border-left-color:var(--muted);background:rgba(125,138,150,.08)">Bitte Düsendurchmesser, Druck und gewünschte mm eingeben.</div>';
+    return;
+  }
+  
+  // Volumenstrom in m³/h
+  const Q = 3.477 * d * d * Math.sqrt(p);
+  // Wurfweite (Radius) in m
+  const wurfweite = 1.35 * Math.sqrt(d * p);
+  // Bahnabstand: Standard 0.7 × Durchmesser (= 1.4 × Radius)
+  const bahn = wurfweite * 1.4;
+  
+  // Einzuggeschwindigkeit: m/h = Q (m³/h) / (Bahn (m) × mm × 0.001 × 1000)
+  //                            = Q / (Bahn × mm) × 1000   [weil 1mm = 0.001m und × 1m² = 0.001m³]
+  // genauer: pro m Vorschub × Bahn Breite × mm/1000 = Wassermenge in m³
+  // also: Q [m³/h] / (Bahn [m] × mm/1000) = m/h
+  const speed = Q / (bahn * mm / 1000);
+  
+  // Praxis-Sanity
+  let warn = '';
+  if(speed < 5)   warn = '⚠ Sehr langsame Einzug-Geschwindigkeit – Stillstandsgefahr beim Rainstar möglich.';
+  if(speed > 120) warn = '⚠ Sehr hohe Einzug-Geschwindigkeit – mm-Wert evtl. zu niedrig oder Düse zu groß.';
+  
+  wrap.innerHTML = `
+    <div class="calc-result">
+      <div class="calc-result-label">Einzuggeschwindigkeit</div>
+      <div class="calc-result-val">${speed.toFixed(1)}<span class="calc-result-unit">m/h</span></div>
+    </div>
+    ${warn ? `<div class="calc-error">${warn}</div>` : ''}
+  `;
+}
+
 function alleLoeschen(){if(!confirm('Alle lokalen Einträge löschen?'))return;localStorage.removeItem('wz_eintraege');renderProtokoll();showToast('Gelöscht');}
 function exportCSVLocal(){downloadCSV(getLocal(),'protokoll');}
 
