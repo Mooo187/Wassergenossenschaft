@@ -181,6 +181,27 @@ textarea{resize:vertical;min-height:72px;font-size:14px}
 .calc-error{margin-top:14px;padding:11px 14px;border-radius:var(--r10);background:var(--orange-bg);color:var(--orange);font-size:13px;border:1px solid rgba(230,126,34,.4)}
 .calc-info{font-size:11px;color:var(--muted);background:var(--b50);padding:8px 11px;border-radius:var(--r8);border-left:3px solid var(--b600);line-height:1.5;margin-top:8px}
 
+/* Mehrteilige Beregnung */
+.mehrteilig-banner{margin-top:10px;padding:11px 13px;border-radius:var(--r10);background:linear-gradient(135deg,rgba(46,125,180,.08),rgba(46,125,180,.14));border:1.5px solid rgba(46,125,180,.35)}
+.mehrteilig-banner.active{background:linear-gradient(135deg,rgba(29,158,117,.1),rgba(29,158,117,.18));border-color:rgba(29,158,117,.5)}
+.mehrteilig-title{font-size:13px;font-weight:700;color:var(--b700);display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.mehrteilig-banner.active .mehrteilig-title{color:var(--green-dark)}
+.mehrteilig-row{font-size:12px;color:var(--text);line-height:1.45;margin-bottom:3px;font-family:'DM Mono',monospace}
+.mehrteilig-meta{font-size:11px;color:var(--muted);margin-top:2px}
+.mehrteilig-actions{display:flex;gap:8px;margin-top:9px}
+.mehrteilig-actions button{flex:1;padding:7px 11px;font-size:12px;border:none;border-radius:var(--r8);font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif}
+.mehrteilig-actions .btn-merge{background:var(--b600);color:#fff}
+.mehrteilig-actions .btn-skip{background:transparent;color:var(--muted);border:1.5px solid var(--border)}
+.mehrteilig-actions .btn-undo{background:var(--orange-bg);color:var(--orange);border:1.5px solid rgba(230,126,34,.3)}
+
+/* Gruppen-Badge im Protokoll */
+.entry-group-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--b700);background:var(--b50);padding:2px 8px;border-radius:var(--r50);font-weight:700;margin-left:6px;vertical-align:middle;cursor:pointer;border:1px solid var(--b100);user-select:none}
+.entry-group-badge:hover,.entry-group-badge:active{background:var(--b100)}
+.entry-group-details{margin-top:8px;padding:9px 11px;background:var(--b50);border-radius:var(--r8);border-left:3px solid var(--b600)}
+.entry-group-detail-row{font-size:12px;line-height:1.5;color:var(--text);font-family:'DM Mono',monospace;display:flex;justify-content:space-between;gap:8px;padding:3px 0}
+.entry-group-detail-row + .entry-group-detail-row{border-top:1px solid var(--b100)}
+.entry-group-detail-name{color:var(--muted);font-family:'DM Sans',sans-serif;font-weight:500}
+
 /* MODAL */
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:300;padding:1rem;overflow-y:auto;align-items:flex-start;justify-content:center}
 .modal-overlay.show{display:flex}
@@ -373,6 +394,7 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
         </select>
         <input type="number" id="f-flaeche" step="0.01" min="0" placeholder="ha" inputmode="decimal" readonly>
       </div>
+      <div id="mehrteilig-banner" class="mehrteilig-banner" style="display:none"></div>
     </div>
 
     <div class="field"><label for="f-standort">Standort / Zapfstelle *</label><input type="text" id="f-standort" placeholder="z.B. Feld Süd – Zapfstelle A" onblur="lookupLastEndstand(this.value)"></div>
@@ -905,6 +927,137 @@ function checkAbweichung(){
   }
 }
 
+// ─── MEHRTEILIGE BEREGNUNG ───────────────────────
+let pendingGroupId = null;
+let pendingPartOf = null;
+
+function getProtoEntries(){ try{ return JSON.parse(localStorage.getItem('wz_eintraege')||'[]'); }catch{return[];} }
+
+function checkMehrteiligeBeregnung(){
+  pendingGroupId = null;
+  pendingPartOf = null;
+  const banner = document.getElementById('mehrteilig-banner');
+  banner.style.display='none';
+  banner.classList.remove('active');
+  
+  const fid = document.getElementById('f-feld-link').value;
+  if(!fid) return;
+  const feld = getFelder().find(f=>String(f.id)===String(fid));
+  if(!feld || !feld.groesse) return;
+  const feldGroesse = parseFloat(feld.groesse);
+  
+  // Suche jüngste Beregnung für gleiches Feld in den letzten 24h
+  const cutoff = Date.now() - 24*60*60*1000;
+  const entries = getProtoEntries()
+    .filter(e=>String(e.feldId)===String(fid))
+    .filter(e=>{
+      const t = new Date(e.endDatum||e.datum||0).getTime();
+      return t > cutoff;
+    })
+    .sort((a,b)=>new Date(b.endDatum||b.datum||0)-new Date(a.endDatum||a.datum||0));
+  
+  if(!entries.length) return;
+  
+  const last = entries[0];
+  // Wenn der jüngste Eintrag eine groupId hat, summieren wir alle der Gruppe
+  const groupId = last.groupId || null;
+  const groupItems = groupId
+    ? entries.filter(e=>e.groupId===groupId)
+    : [last];
+  const beregnetSum = groupItems.reduce((s,e)=>s+(parseFloat(e.flaeche)||0),0);
+  const rest = feldGroesse - beregnetSum;
+  
+  if(rest <= 0.01) return; // Feld bereits komplett beregnet
+  
+  pendingPartOf = last;
+  
+  const dt = new Date(last.endDatum||last.datum).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const partStr = groupItems.length>1 ? `${groupItems.length} Teilberegnungen` : '1 Beregnung';
+  banner.innerHTML = `
+    <div class="mehrteilig-title">🔗 Feld wurde teilweise beregnet</div>
+    <div class="mehrteilig-row">${beregnetSum.toFixed(2)} ha von ${feldGroesse.toFixed(2)} ha · Rest: <strong>${rest.toFixed(2)} ha</strong></div>
+    <div class="mehrteilig-meta">${partStr} · zuletzt ${dt} (${last.name})</div>
+    <div class="mehrteilig-actions">
+      <button type="button" class="btn-merge" onclick="uebernehmeFortsetzung()">🔗 Mit voriger zusammenführen</button>
+      <button type="button" class="btn-skip" onclick="abbrechenFortsetzung()">Separat</button>
+    </div>
+  `;
+  banner.style.display='block';
+}
+
+function uebernehmeFortsetzung(){
+  if(!pendingPartOf) return;
+  
+  // Falls die ursprüngliche Beregnung noch keine groupId hat, rückwirkend vergeben
+  let groupId = pendingPartOf.groupId;
+  if(!groupId){
+    groupId = 'grp_' + pendingPartOf.id;
+    
+    // Lokal aktualisieren
+    const local = getProtoEntries();
+    const idx = local.findIndex(e=>e.id===pendingPartOf.id);
+    if(idx>=0){
+      local[idx].groupId = groupId;
+      localStorage.setItem('wz_eintraege', JSON.stringify(local));
+    }
+    
+    // Server: groupId der ursprünglichen Zeile nachtragen
+    let q = JSON.parse(localStorage.getItem('wz_queue')||'[]');
+    q.push({type:'update_entry', id:pendingPartOf.id, groupId:groupId});
+    localStorage.setItem('wz_queue', JSON.stringify(q));
+    processQueue();
+  }
+  pendingGroupId = groupId;
+  pendingPartOf.groupId = groupId;
+  
+  // Restfläche berechnen und einsetzen
+  const feld = getFelder().find(f=>String(f.id)===String(pendingPartOf.feldId));
+  if(feld && feld.groesse){
+    const local = getProtoEntries();
+    const groupItems = local.filter(e=>e.groupId===groupId);
+    const beregnetSum = groupItems.reduce((s,e)=>s+(parseFloat(e.flaeche)||0),0);
+    const rest = parseFloat(feld.groesse) - beregnetSum;
+    const fl = document.getElementById('f-flaeche');
+    fl.value = rest.toFixed(2);
+    fl.readOnly = false;
+    document.getElementById('f-flaeche-art').value = 'teil';
+  }
+  
+  // Banner-Status: jetzt aktiv
+  const banner = document.getElementById('mehrteilig-banner');
+  banner.classList.add('active');
+  banner.innerHTML = `
+    <div class="mehrteilig-title">✓ Wird mit voriger zusammengeführt</div>
+    <div class="mehrteilig-meta">Diese Beregnung erscheint im Protokoll als Teil derselben Beregnung.</div>
+    <div class="mehrteilig-actions">
+      <button type="button" class="btn-undo" onclick="abbrechenFortsetzung()">↶ Doch separat behandeln</button>
+    </div>
+  `;
+  showToast('🔗 Beregnung wird zusammengeführt');
+}
+
+function abbrechenFortsetzung(){
+  pendingGroupId = null;
+  // pendingPartOf nicht löschen, damit checkMehrteiligeBeregnung noch funktioniert
+  const banner = document.getElementById('mehrteilig-banner');
+  // Wenn pendingPartOf noch da, Banner wieder im "Vorschlag"-Modus zeigen
+  if(pendingPartOf){
+    banner.classList.remove('active');
+    // Zurück zum Vorschlags-Banner
+    checkMehrteiligeBeregnung();
+  }else{
+    banner.style.display='none';
+  }
+  // Fläche auf Feldgröße zurücksetzen
+  const fid = document.getElementById('f-feld-link').value;
+  const feld = getFelder().find(f=>String(f.id)===String(fid));
+  if(feld){
+    document.getElementById('f-flaeche').value = feld.groesse||'';
+    document.getElementById('f-flaeche').readOnly = true;
+    document.getElementById('f-flaeche-art').value = 'ganz';
+  }
+}
+
 // ─── DEVICE ID & REMOTE AKTIV (geteilte Karte) ───
 function getDeviceId(){
   let id = localStorage.getItem('wz_device_id');
@@ -1135,6 +1288,8 @@ function onFeldLink(){
   
   if(!fid){
     fw.style.display='none'; fi.value='';
+    pendingGroupId=null; pendingPartOf=null;
+    document.getElementById('mehrteilig-banner').style.display='none';
     return;
   }
   
@@ -1149,6 +1304,7 @@ function onFeldLink(){
     fi.value=f.groesse||'';
     fi.readOnly=true;
   }
+  checkMehrteiligeBeregnung();
 }
 
 function toggleFlaecheArt(){
@@ -1191,7 +1347,7 @@ function beregnungStarten(){
   // Gewählte Kultur in die Top 3 der "Recent" speichern
   speichereRecentKultur(kultur);
 
-  const entry={id:Date.now(),name,standort,startstand:s,startNote,kultur:kultur,datum:new Date().toISOString(),qr,feldId,flaeche,lat:currentGPS?.lat||null,lng:currentGPS?.lng||null,acc:currentGPS?.acc||null};
+  const entry={id:Date.now(),name,standort,startstand:s,startNote,kultur:kultur,datum:new Date().toISOString(),qr,feldId,flaeche,groupId:pendingGroupId||null,lat:currentGPS?.lat||null,lng:currentGPS?.lng||null,acc:currentGPS?.acc||null};
   const aktiv=getAktiv();aktiv.push(entry);saveAktiv(aktiv);
   
   // NEU: Live-Vorgang an Server schicken, damit andere ihn auf der Karte sehen
@@ -1213,6 +1369,8 @@ function beregnungStarten(){
   document.getElementById('f-kultur').value='';
   document.getElementById('f-startnote').value='';
   document.getElementById('flaeche-wrap').style.display='none';
+  document.getElementById('mehrteilig-banner').style.display='none';
+  pendingGroupId=null; pendingPartOf=null;
   resetQR();currentGPS=null;
   clearLastEndSuggestion();
   prefillName(); // Standard-Name wieder einsetzen für nächste Beregnung
@@ -1462,7 +1620,7 @@ async function beregnungBeenden(){
   const netMs = getElapsedMs(v.datum, pausedTotal, null);
   const grossMs = Date.now() - new Date(v.datum).getTime();
   
-  const entry={id:Date.now(),name:v.name,standort:v.standort,kultur:v.kultur,startstand:v.startstand,startNote:v.startNote||'',endstand:endVal,wasser:verbrauch,flaeche:v.flaeche,mm:mm,datum:v.datum,endDatum:new Date().toISOString(),qr:v.qr,laufzeit:fmtElapsed(netMs),laufzeitBrutto:fmtElapsed(grossMs),pausenZeit:fmtElapsed(pausedTotal),lat:v.lat||null,lng:v.lng||null,feldId:v.feldId||null};
+  const entry={id:Date.now(),name:v.name,standort:v.standort,kultur:v.kultur,startstand:v.startstand,startNote:v.startNote||'',endstand:endVal,wasser:verbrauch,flaeche:v.flaeche,mm:mm,datum:v.datum,endDatum:new Date().toISOString(),qr:v.qr,laufzeit:fmtElapsed(netMs),laufzeitBrutto:fmtElapsed(grossMs),pausenZeit:fmtElapsed(pausedTotal),groupId:v.groupId||null,lat:v.lat||null,lng:v.lng||null,feldId:v.feldId||null};
   
   // Ins lokale Protokoll
   const local=getLocal();local.unshift(entry);localStorage.setItem('wz_eintraege',JSON.stringify(local));
@@ -1646,14 +1804,78 @@ function saveKultur(){
 // ─── PROTOKOLL ───────────────────────────────────
 function getLocal(){try{return JSON.parse(localStorage.getItem('wz_eintraege')||'[]');}catch{return[];}}
 function renderProtokoll(){
-  const d=getLocal(),list=document.getElementById('proto-list'),btns=document.getElementById('proto-btns');
-  if(!d.length){list.innerHTML='<div class="empty"><span class="ei">📭</span>Noch keine Vorgänge</div>';btns.style.display='none';return;}
+  const all=getLocal();
+  const list=document.getElementById('proto-list'),btns=document.getElementById('proto-btns');
+  if(!all.length){list.innerHTML='<div class="empty"><span class="ei">📭</span>Noch keine Vorgänge</div>';btns.style.display='none';return;}
   btns.style.display='flex';
-  list.innerHTML=d.map(e=>{
-    const ini=e.name.split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
+  
+  // Nach groupId gruppieren
+  const groups={};
+  const standalone=[];
+  all.forEach(e=>{
+    if(e.groupId){
+      if(!groups[e.groupId]) groups[e.groupId]=[];
+      groups[e.groupId].push(e);
+    }else{
+      standalone.push(e);
+    }
+  });
+  
+  // Aus Gruppen aggregierte Pseudo-Einträge bauen (chronologisch sortiert innerhalb)
+  const grouped=Object.entries(groups).map(([gid,items])=>{
+    items.sort((a,b)=>new Date(a.datum||0)-new Date(b.datum||0));
+    const wasserSum=items.reduce((s,e)=>s+(parseFloat(e.wasser)||0),0);
+    const flaecheSum=items.reduce((s,e)=>s+(parseFloat(e.flaeche)||0),0);
+    const mmAvg=flaecheSum>0?wasserSum/(flaecheSum*10):null;
+    return{
+      ...items[0],
+      _isGroup:true,
+      _items:items,
+      _gid:gid,
+      wasser:wasserSum,
+      flaeche:flaecheSum,
+      mm:mmAvg,
+      datum:items[0].datum,
+      endDatum:items[items.length-1].endDatum
+    };
+  });
+  
+  // Anzeigen: alle Standalone + Gruppen, nach jüngstem Ereignis sortiert
+  const display=[...standalone,...grouped].sort((a,b)=>
+    new Date(b.endDatum||b.datum||0)-new Date(a.endDatum||a.datum||0)
+  );
+  
+  list.innerHTML=display.map(e=>{
+    const ini=(e.name||'?').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2);
     const dt=e.datum?new Date(e.datum).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
     const feldName=e.feldId?getFelder().find(f=>f.id==e.feldId)?.name:'';
     const editedBadge=e.editiert?`<span class="entry-edited-badge">✏️ bearbeitet</span>`:'';
+    
+    if(e._isGroup){
+      const detailRows=e._items.map(it=>{
+        const tdt=it.datum?new Date(it.datum).toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit'}):'';
+        const tend=it.endDatum?new Date(it.endDatum).toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit'}):'';
+        const itMm=it.mm?parseFloat(it.mm).toFixed(1)+' mm':'—';
+        return`<div class="entry-group-detail-row">
+          <span class="entry-group-detail-name">${tdt}–${tend} · ${it.name||'?'}</span>
+          <span>${parseFloat(it.flaeche||0).toFixed(2)} ha · ${parseFloat(it.wasser||0).toFixed(1)} m³ · ${itMm}</span>
+        </div>`;
+      }).join('');
+      const gid=e._gid.replace(/[^a-zA-Z0-9_]/g,'');
+      const namesUnique=[...new Set(e._items.map(it=>it.name).filter(Boolean))].join(' + ');
+      
+      return`<div class="entry-item">
+        <div class="ava">${ini}</div>
+        <div class="entry-info">
+          <div class="entry-name">${namesUnique||e.name}<span class="entry-group-badge" onclick="document.getElementById('grp-det-${gid}').style.display=document.getElementById('grp-det-${gid}').style.display==='none'?'block':'none'">🔗 ${e._items.length} Teilberegnungen ▾</span>${editedBadge}</div>
+          <div class="entry-sub">📍 ${e.standort}${feldName?` · 🌾 ${feldName}`:''} · 📐 ${parseFloat(e.flaeche).toFixed(2)} ha${e.kultur?` · 🌱 ${e.kultur}`:''}</div>
+          <div class="entry-sub">🕐 ${dt}${e.mm?' · 🌧️ '+parseFloat(e.mm).toFixed(1)+' mm':''}</div>
+          <div class="entry-group-details" id="grp-det-${gid}" style="display:none">${detailRows}</div>
+        </div>
+        <div class="entry-val">${parseFloat(e.wasser).toFixed(3)}<small>m³</small></div>
+      </div>`;
+    }
+    
     return`<div class="entry-item">
       <button class="entry-edit-btn" onclick="openEditEntryModal(${e.id})" title="Feld/Fläche bearbeiten">✏️</button>
       <div class="ava">${ini}</div>
