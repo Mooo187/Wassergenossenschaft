@@ -153,8 +153,10 @@ textarea{resize:vertical;min-height:72px;font-size:14px}
 
 /* Protokoll-Edit */
 .entry-item{position:relative}
-.entry-edit-btn{position:absolute;top:8px;right:8px;background:transparent;border:none;font-size:14px;color:var(--muted);cursor:pointer;padding:6px 8px;border-radius:var(--r8);line-height:1}
+.entry-action-row{position:absolute;top:6px;right:6px;display:flex;gap:2px}
+.entry-edit-btn,.entry-del-btn{background:transparent;border:none;font-size:14px;color:var(--muted);cursor:pointer;padding:6px 8px;border-radius:var(--r8);line-height:1}
 .entry-edit-btn:hover,.entry-edit-btn:active{background:var(--b50);color:var(--b600)}
+.entry-del-btn:hover,.entry-del-btn:active{background:var(--orange-bg);color:var(--orange)}
 .entry-edited-badge{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--orange);background:var(--orange-bg);padding:1px 7px;border-radius:var(--r50);font-weight:600;margin-left:6px;vertical-align:middle}
 
 /* PAUSE-Status */
@@ -495,8 +497,7 @@ code{background:var(--b50);padding:1px 5px;border-radius:5px;font-family:'DM Mon
     <div id="proto-list"></div>
   </div>
   <div class="btn-row" id="proto-btns" style="display:none">
-    <button class="btn btn-ghost" onclick="exportCSVLocal()">📥 CSV</button>
-    <button class="btn btn-danger" onclick="alleLoeschen()">🗑 Löschen</button>
+    <button class="btn btn-ghost" onclick="exportCSVLocal()">📥 CSV exportieren</button>
   </div>
 </div>
 
@@ -945,25 +946,33 @@ function checkMehrteiligeBeregnung(){
   const feld = getFelder().find(f=>String(f.id)===String(fid));
   if(!feld || !feld.groesse) return;
   const feldGroesse = parseFloat(feld.groesse);
+  const aktuelleKultur = (feld.kultur||'').trim().toLowerCase();
   
-  // Suche jüngste Beregnung für gleiches Feld in den letzten 24h
-  const cutoff = Date.now() - 24*60*60*1000;
-  const entries = getProtoEntries()
+  // Suche bisherige Beregnungen für gleiches Feld – nur in der aktuellen Kultur-Periode
+  // (also nur Einträge, deren Kultur zur aktuell hinterlegten Kultur des Feldes passt)
+  const allEntries = getProtoEntries()
     .filter(e=>String(e.feldId)===String(fid))
     .filter(e=>{
-      const t = new Date(e.endDatum||e.datum||0).getTime();
-      return t > cutoff;
+      // Wenn am Feld keine Kultur hinterlegt ist, nimm alle
+      if(!aktuelleKultur) return true;
+      const eKultur = (e.kultur||'').trim().toLowerCase();
+      return eKultur === aktuelleKultur;
     })
     .sort((a,b)=>new Date(b.endDatum||b.datum||0)-new Date(a.endDatum||a.datum||0));
   
-  if(!entries.length) return;
+  if(!allEntries.length) return;
   
-  const last = entries[0];
+  const last = allEntries[0];
   // Wenn der jüngste Eintrag eine groupId hat, summieren wir alle der Gruppe
+  // Sonst betrachten wir alle Einträge ohne groupId, die zur Kultur-Periode gehören,
+  // als potenzielle Vorgänger der NEUEN Gruppe
   const groupId = last.groupId || null;
-  const groupItems = groupId
-    ? entries.filter(e=>e.groupId===groupId)
-    : [last];
+  let groupItems;
+  if(groupId){
+    groupItems = allEntries.filter(e=>e.groupId===groupId);
+  }else{
+    groupItems = [last];
+  }
   const beregnetSum = groupItems.reduce((s,e)=>s+(parseFloat(e.flaeche)||0),0);
   const rest = feldGroesse - beregnetSum;
   
@@ -971,7 +980,7 @@ function checkMehrteiligeBeregnung(){
   
   pendingPartOf = last;
   
-  const dt = new Date(last.endDatum||last.datum).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const dt = new Date(last.endDatum||last.datum).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
   const partStr = groupItems.length>1 ? `${groupItems.length} Teilberegnungen` : '1 Beregnung';
   banner.innerHTML = `
     <div class="mehrteilig-title">🔗 Feld wurde teilweise beregnet</div>
@@ -1853,18 +1862,23 @@ function renderProtokoll(){
     
     if(e._isGroup){
       const detailRows=e._items.map(it=>{
-        const tdt=it.datum?new Date(it.datum).toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit'}):'';
-        const tend=it.endDatum?new Date(it.endDatum).toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit'}):'';
+        const tdt=it.datum?new Date(it.datum).toLocaleString('de-AT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
         const itMm=it.mm?parseFloat(it.mm).toFixed(1)+' mm':'—';
         return`<div class="entry-group-detail-row">
-          <span class="entry-group-detail-name">${tdt}–${tend} · ${it.name||'?'}</span>
-          <span>${parseFloat(it.flaeche||0).toFixed(2)} ha · ${parseFloat(it.wasser||0).toFixed(1)} m³ · ${itMm}</span>
+          <span class="entry-group-detail-name">${tdt} · ${it.name||'?'}</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <span>${parseFloat(it.flaeche||0).toFixed(2)} ha · ${parseFloat(it.wasser||0).toFixed(1)} m³ · ${itMm}</span>
+            <button class="entry-del-btn" onclick="deleteEntry(${it.id})" title="Diese Teilberegnung löschen">🗑</button>
+          </span>
         </div>`;
       }).join('');
       const gid=e._gid.replace(/[^a-zA-Z0-9_]/g,'');
       const namesUnique=[...new Set(e._items.map(it=>it.name).filter(Boolean))].join(' + ');
       
       return`<div class="entry-item">
+        <div class="entry-action-row">
+          <button class="entry-del-btn" onclick="deleteGroup('${e._gid}')" title="Gesamte Beregnung löschen">🗑</button>
+        </div>
         <div class="ava">${ini}</div>
         <div class="entry-info">
           <div class="entry-name">${namesUnique||e.name}<span class="entry-group-badge" onclick="document.getElementById('grp-det-${gid}').style.display=document.getElementById('grp-det-${gid}').style.display==='none'?'block':'none'">🔗 ${e._items.length} Teilberegnungen ▾</span>${editedBadge}</div>
@@ -1877,7 +1891,10 @@ function renderProtokoll(){
     }
     
     return`<div class="entry-item">
-      <button class="entry-edit-btn" onclick="openEditEntryModal(${e.id})" title="Feld/Fläche bearbeiten">✏️</button>
+      <div class="entry-action-row">
+        <button class="entry-edit-btn" onclick="openEditEntryModal(${e.id})" title="Feld/Fläche bearbeiten">✏️</button>
+        <button class="entry-del-btn" onclick="deleteEntry(${e.id})" title="Eintrag löschen">🗑</button>
+      </div>
       <div class="ava">${ini}</div>
       <div class="entry-info">
         <div class="entry-name">${e.name}${editedBadge}</div>
@@ -1971,8 +1988,48 @@ function rechneRainstar(){
   `;
 }
 
-function alleLoeschen(){if(!confirm('Alle lokalen Einträge löschen?'))return;localStorage.removeItem('wz_eintraege');renderProtokoll();showToast('Gelöscht');}
 function exportCSVLocal(){downloadCSV(getLocal(),'protokoll');}
+
+function deleteEntry(id){
+  const local=getLocal();
+  const e=local.find(x=>x.id===id);
+  if(!e){showToast('Eintrag nicht gefunden');return;}
+  const dt=e.datum?new Date(e.datum).toLocaleDateString('de-AT'):'';
+  if(!confirm(`Diese Beregnung wirklich löschen?\n\n${e.name} · ${e.standort} · ${dt}\n${parseFloat(e.wasser||0).toFixed(3)} m³`)) return;
+  
+  // Lokal entfernen
+  localStorage.setItem('wz_eintraege', JSON.stringify(local.filter(x=>x.id!==id)));
+  
+  // Server: Zeile löschen
+  let q=JSON.parse(localStorage.getItem('wz_queue')||'[]');
+  q.push({type:'delete_entry', id});
+  localStorage.setItem('wz_queue', JSON.stringify(q));
+  processQueue();
+  
+  renderProtokoll();
+  showToast('🗑 Eintrag gelöscht');
+}
+
+function deleteGroup(groupId){
+  const local=getLocal();
+  const items=local.filter(e=>e.groupId===groupId);
+  if(!items.length){showToast('Gruppe nicht gefunden');return;}
+  if(!confirm(`Gesamte Beregnung mit ${items.length} Teilberegnung${items.length>1?'en':''} wirklich löschen?\n\nAlle ${items.length} Einzelvorgänge werden entfernt.`)) return;
+  
+  const ids=items.map(it=>it.id);
+  
+  // Lokal entfernen
+  localStorage.setItem('wz_eintraege', JSON.stringify(local.filter(e=>e.groupId!==groupId)));
+  
+  // Server: jede Zeile einzeln löschen
+  let q=JSON.parse(localStorage.getItem('wz_queue')||'[]');
+  ids.forEach(id=>q.push({type:'delete_entry', id}));
+  localStorage.setItem('wz_queue', JSON.stringify(q));
+  processQueue();
+  
+  renderProtokoll();
+  showToast(`🗑 Beregnung mit ${items.length} Teilen gelöscht`);
+}
 
 // ─── PROTOKOLL: EINTRAG BEARBEITEN ──────────────
 let editingEntryId=null;
