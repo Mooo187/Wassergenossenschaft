@@ -60,10 +60,8 @@
         --border: rgba(42, 139, 191, 0.2);
         --b50: #0D1C26;
         --b100: #152D3D;
-        --green-bg: #0D2A22;
-        --orange-bg: #1F1A0A;
-        --danger-bg: #2A0F0C;
-        --brown-bg: #1F1208
+        --b700: #7AB8D4;
+        --b800: #A8D4E8;
       }
     }
 
@@ -317,9 +315,11 @@
       font-size: 20px;
       font-weight: 500;
       letter-spacing: 1px;
-      color: var(--b800);
+      color: var(--text);
       padding-right: 54px
     }
+
+
 
     .m3-unit {
       position: absolute;
@@ -851,10 +851,11 @@
       font-family: 'DM Mono', monospace;
       font-size: 15px;
       font-weight: 500;
-      color: var(--b700);
+      color: var(--text);
       line-height: 1.2;
       margin-top: 1px
     }
+
 
     .last-end-chip .le-meta {
       font-size: 11px;
@@ -3569,29 +3570,29 @@
       return { Q: v(0), r: v(1) };
     }
 
-    function rechneRainstar(){
-  const d = parseFloat(document.getElementById('cd-duese').value);
-  const p = parseFloat(document.getElementById('cd-druck').value);
-  const mm = parseFloat(document.getElementById('cd-mm').value);
-  const sektor = parseInt(document.getElementById('cd-sektor')?.value) || 180;
-  const wrap = document.getElementById('cd-result-wrap');
-  
-  if(!d || !p || !mm || d<=0 || p<=0 || mm<=0){
-    wrap.innerHTML = '<div class="calc-info" style="border-left-color:var(--muted);background:rgba(125,138,150,.08)">Bitte Düsendurchmesser, Druck und gewünschte mm eingeben.</div>';
-    return;
-  }
-  
-  const { Q, r } = interpRainstar(d, p);
-  const breite = sektor === 90 ? r : 2 * r;
-  const speed = Q / (breite * mm / 1000);
-  
-  let warn = '';
-  if(d < 14 || d > 30) warn = '⚠ Düsendurchmesser außerhalb Tabellenbereich (14–30 mm), Wert geschätzt.';
-  else if(p < 4 || p > 7) warn = '⚠ Druck außerhalb Tabellenbereich (4–7 bar), Wert geschätzt.';
-  else if(speed < 5) warn = '⚠ Sehr langsam – Stillstandsgefahr. mm-Wert evtl. zu hoch.';
-  else if(speed > 100) warn = '⚠ Sehr schnell – mm-Wert evtl. zu niedrig.';
-  
-  wrap.innerHTML = `
+    function rechneRainstar() {
+      const d = parseFloat(document.getElementById('cd-duese').value);
+      const p = parseFloat(document.getElementById('cd-druck').value);
+      const mm = parseFloat(document.getElementById('cd-mm').value);
+      const sektor = parseInt(document.getElementById('cd-sektor')?.value) || 180;
+      const wrap = document.getElementById('cd-result-wrap');
+
+      if (!d || !p || !mm || d <= 0 || p <= 0 || mm <= 0) {
+        wrap.innerHTML = '<div class="calc-info" style="border-left-color:var(--muted);background:rgba(125,138,150,.08)">Bitte Düsendurchmesser, Druck und gewünschte mm eingeben.</div>';
+        return;
+      }
+
+      const { Q, r } = interpRainstar(d, p);
+      const breite = sektor === 90 ? r : 2 * r;
+      const speed = Q / (breite * mm / 1000);
+
+      let warn = '';
+      if (d < 14 || d > 30) warn = '⚠ Düsendurchmesser außerhalb Tabellenbereich (14–30 mm), Wert geschätzt.';
+      else if (p < 4 || p > 7) warn = '⚠ Druck außerhalb Tabellenbereich (4–7 bar), Wert geschätzt.';
+      else if (speed < 5) warn = '⚠ Sehr langsam – Stillstandsgefahr. mm-Wert evtl. zu hoch.';
+      else if (speed > 100) warn = '⚠ Sehr schnell – mm-Wert evtl. zu niedrig.';
+
+      wrap.innerHTML = `
     <div class="calc-result">
       <div class="calc-result-label">Einzuggeschwindigkeit</div>
       <div class="calc-result-val">${speed.toFixed(1)}<span class="calc-result-unit">m/h</span></div>
@@ -3616,7 +3617,7 @@
     </div>
     ${warn ? `<div class="calc-error">${warn}</div>` : ''}
   `;
-}
+    }
 
     function exportCSVLocal() { downloadCSV(getLocal(), 'protokoll'); }
 
