@@ -1205,7 +1205,25 @@ function updateMyLocationOnMap(){
 function initMap(){
   if(leafletMap)return;
   leafletMap=L.map('aktiv-map',{zoomControl:true});
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© <a href="https://openstreetmap.org">OpenStreetMap</a>',maxZoom:19}).addTo(leafletMap);
+  
+  const satellite = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution:'© Esri, Maxar, Earthstar Geographics', maxZoom:19 }
+  );
+  
+  const streets = L.tileLayer(
+    'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { attribution:'© <a href="https://openstreetmap.org">OpenStreetMap</a>', maxZoom:19 }
+  );
+  
+  satellite.addTo(leafletMap); // Satellit als Standard
+  
+  L.control.layers(
+    { '🛰️ Satellit': satellite, '🗺️ Straße': streets },
+    {},
+    { position: 'topright' }
+  ).addTo(leafletMap);
+  
   leafletMap.setView([47.8,14.0],7);
 }
 const MC_OWN='#E67E22', MC_REMOTE='#9B59B6';
